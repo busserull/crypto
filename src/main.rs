@@ -1,9 +1,12 @@
-mod sextet_iter;
+mod base64;
+mod chunk_pair_iter;
 
-use sextet_iter::SextetIter;
+use chunk_pair_iter::ChunkPairIter;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
+use std::iter::Cycle;
 
 struct Buffer(Vec<u8>);
 
@@ -16,27 +19,12 @@ impl Buffer {
         hex::encode(&self.0)
     }
 
+    fn from_base64(encoding: &str) -> Self {
+        Self(base64::base64_to_bytes(encoding))
+    }
+
     fn to_base64(&self) -> String {
-        let mut encoding = String::new();
-
-        for sextet in SextetIter::new(&self.0).into_iter() {
-            let ch = match sextet {
-                0..=25 => ('A' as u8 + sextet) as char,
-                26..=51 => ('a' as u8 + sextet - 26) as char,
-                52..=61 => ('0' as u8 + sextet - 52) as char,
-                62 => '+',
-                63 => '\\',
-                _ => unreachable!(),
-            };
-
-            encoding.push(ch);
-        }
-
-        while encoding.len() % 4 != 0 {
-            encoding.push('=');
-        }
-
-        encoding
+        base64::bytes_to_base64(&self.0)
     }
 
     fn xor(&self, rhs: &Self) -> Self {
@@ -53,61 +41,126 @@ impl Buffer {
         )
     }
 
-    fn printable_frequencies(&self) -> HashMap<char, f64> {
-        let mut frequencies = HashMap::new();
+    fn hamming_distance(&self, rhs: &Self) -> usize {
+        hamming_distance(&self.0, &rhs.0)
+    }
 
-        for byte in self.0.iter() {
-            let ch = (*byte as char).to_ascii_lowercase();
+    fn predict_repeated_xor_key_size(&self, min: usize, max: usize) -> usize {
+        let mut lowest_penalty = f64::INFINITY;
+        let mut predicted_keysize = min;
 
-            if matches!(ch, 'a'..='z' | ' ') {
-                frequencies
-                    .entry(ch)
-                    .and_modify(|count| *count += 1.0)
-                    .or_insert(1.0);
+        for key_size in min..=max {
+            let pairs = ChunkPairIter::new(&self.0, key_size);
+            let pair_count = pairs.pair_count();
+
+            if pair_count == 0 {
+                break;
+            }
+
+            let hamming_sum: usize = pairs.into_iter().map(|(a, b)| hamming_distance(a, b)).sum();
+            let normalization = pair_count * key_size;
+
+            let penalty = hamming_sum as f64 / normalization as f64;
+
+            if penalty < lowest_penalty {
+                lowest_penalty = penalty;
+                predicted_keysize = key_size;
             }
         }
 
-        for (_, f) in frequencies.iter_mut() {
-            *f /= self.0.len() as f64;
+        predicted_keysize
+    }
+
+    fn transpose(&self, size: usize) -> Vec<Self> {
+        let mut t: Vec<Vec<u8>> = vec![Vec::new(); size];
+
+        for (byte, into) in self.0.iter().zip((0..size).cycle()) {
+            t[into].push(*byte);
         }
 
-        frequencies
+        t.into_iter().map(|buffer| Buffer(buffer)).collect()
+    }
+
+    fn printable_english_mismatch(&self) -> f64 {
+        let english = [
+            (b'a', 0.06633756394386363),
+            (b'b', 0.014060607265779448),
+            (b'c', 0.019563880893316697),
+            (b'd', 0.03194748939033141),
+            (b'e', 0.09884018632583158),
+            (b'f', 0.017709570989909836),
+            (b'g', 0.017744370371475113),
+            (b'h', 0.05261335069988185),
+            (b'i', 0.0563981977234576),
+            (b'j', 0.0009876395910906955),
+            (b'k', 0.006951590746015885),
+            (b'l', 0.035942789816706684),
+            (b'm', 0.020442150999487953),
+            (b'n', 0.05593420596925392),
+            (b'o', 0.059487057115727826),
+            (b'p', 0.014851050361333579),
+            (b'q', 0.0015162587682013193),
+            (b'r', 0.04416704365996696),
+            (b's', 0.05390755627142855),
+            (b't', 0.07436959263181095),
+            (b'u', 0.02275216709005914),
+            (b'v', 0.0074768956963107685),
+            (b'w', 0.018761838003907474),
+            (b'x', 0.0011019804162337458),
+            (b'y', 0.014599169123337294),
+            (b'z', 0.0004474206201249795),
+            (b' ', 0.19108837551515512),
+        ];
+
+        let mut observed = HashMap::<u8, usize>::new();
+
+        for byte in self.0.iter() {
+            observed
+                .entry(*byte)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+        }
+
+        english
+            .iter()
+            .map(|(ch, f)| {
+                f64::powi(
+                    f - (observed.get(ch).cloned().unwrap_or_default() as f64
+                        / self.0.len() as f64),
+                    2,
+                )
+            })
+            .sum()
     }
 }
 
-fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
-    let english: HashMap<char, f64> = [
-        ('a', 0.06633756394386363),
-        ('b', 0.014060607265779448),
-        ('c', 0.019563880893316697),
-        ('d', 0.03194748939033141),
-        ('e', 0.09884018632583158),
-        ('f', 0.017709570989909836),
-        ('g', 0.017744370371475113),
-        ('h', 0.05261335069988185),
-        ('i', 0.0563981977234576),
-        ('j', 0.0009876395910906955),
-        ('k', 0.006951590746015885),
-        ('l', 0.035942789816706684),
-        ('m', 0.020442150999487953),
-        ('n', 0.05593420596925392),
-        ('o', 0.059487057115727826),
-        ('p', 0.014851050361333579),
-        ('q', 0.0015162587682013193),
-        ('r', 0.04416704365996696),
-        ('s', 0.05390755627142855),
-        ('t', 0.07436959263181095),
-        ('u', 0.02275216709005914),
-        ('v', 0.0074768956963107685),
-        ('w', 0.018761838003907474),
-        ('x', 0.0011019804162337458),
-        ('y', 0.014599169123337294),
-        ('z', 0.0004474206201249795),
-        (' ', 0.19108837551515512),
-    ]
-    .into_iter()
-    .collect();
+impl From<&[u8]> for Buffer {
+    fn from(value: &[u8]) -> Self {
+        Self(Vec::from(value))
+    }
+}
 
+impl FromIterator<u8> for Buffer {
+    fn from_iter<T: IntoIterator<Item = u8>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl fmt::Display for Buffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", String::from_utf8_lossy(&self.0))
+    }
+}
+
+fn hamming_distance(first: &[u8], second: &[u8]) -> usize {
+    first
+        .into_iter()
+        .zip(second.into_iter())
+        .map(|(a, b)| (a ^ b).count_ones() as usize)
+        .sum()
+}
+
+fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
     let mut best_key = 0;
     let mut lowest_penalty = f64::INFINITY;
 
@@ -115,12 +168,7 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
         let key = Buffer(vec![key_byte]);
         let deciphered = buffer.xor(&key);
 
-        let frequencies = deciphered.printable_frequencies();
-
-        let penalty = english
-            .iter()
-            .map(|(ch, f)| f64::powi(f - frequencies.get(&ch).cloned().unwrap_or_default(), 2))
-            .sum();
+        let penalty = deciphered.printable_english_mismatch();
 
         if penalty < lowest_penalty {
             lowest_penalty = penalty;
@@ -135,15 +183,20 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let poetry = "Burning 'em, if you ain't quick and nimble
-I go crazy when I hear a cymbal";
+    let ciphertext = Buffer::from_base64(&fs::read_to_string("6.txt").unwrap());
 
-    let cleartext = Buffer(poetry.bytes().collect());
-    let key = Buffer(Vec::from(b"ICE"));
+    let predicted_key_size = ciphertext.predict_repeated_xor_key_size(2, 40);
 
-    let ciphertext = cleartext.xor(&key);
+    let blocks = ciphertext.transpose(predicted_key_size);
 
-    assert_eq!(ciphertext.to_hex(), "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f");
+    let key: Buffer = blocks
+        .into_iter()
+        .map(|block| single_xor_key_decipher(block))
+        .map(|(_, key_byte, _)| key_byte)
+        .collect();
 
-    println!("{}", ciphertext.to_hex());
+    let cleartext = ciphertext.xor(&key);
+
+    println!("Key: '{}'", key);
+    println!("Cleartext:\n{}", cleartext);
 }
