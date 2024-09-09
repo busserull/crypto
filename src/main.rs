@@ -2,11 +2,17 @@ mod sextet_iter;
 
 use sextet_iter::SextetIter;
 
+use std::ops::BitXor;
+
 struct Buffer(Vec<u8>);
 
 impl Buffer {
     fn from_hex(string: &str) -> Self {
         Self(hex::decode(string).unwrap())
+    }
+
+    fn to_hex(&self) -> String {
+        hex::encode(&self.0)
     }
 
     fn to_base64(&self) -> String {
@@ -33,15 +39,31 @@ impl Buffer {
     }
 }
 
+impl BitXor for Buffer {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        let new_buffer_size = std::cmp::max(self.0.len(), rhs.0.len());
+
+        Self(
+            self.0
+                .iter()
+                .cycle()
+                .zip(rhs.0.iter().cycle())
+                .take(new_buffer_size)
+                .map(|(a, b)| a ^ b)
+                .collect(),
+        )
+    }
+}
+
 fn main() {
-    let buffer = Buffer::from_hex("49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d");
+    let b1 = Buffer::from_hex("1c0111001f010100061a024b53535009181c");
+    let b2 = Buffer::from_hex("686974207468652062756c6c277320657965");
 
-    let base64 = buffer.to_base64();
+    let xor = b1 ^ b2;
 
-    assert_eq!(
-        base64,
-        "SSdtIGtpbGxpbmcgeW91ciBicmFpbiBsaWtlIGEgcG9pc29ub3VzIG11c2hyb29t"
-    );
+    assert_eq!(xor.to_hex(), "746865206b696420646f6e277420706c6179");
 
-    println!("{}", String::from_utf8_lossy(&buffer.0));
+    println!("{}", xor.to_hex());
 }
