@@ -135,19 +135,15 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let mut lowest_penalty = f64::INFINITY;
-    let mut best_candidate = Buffer(Vec::new());
+    let poetry = "Burning 'em, if you ain't quick and nimble
+I go crazy when I hear a cymbal";
 
-    for line in fs::read_to_string("4.txt").unwrap().split_whitespace() {
-        let buffer = Buffer::from_hex(line);
+    let cleartext = Buffer(poetry.bytes().collect());
+    let key = Buffer(Vec::from(b"ICE"));
 
-        let (penalty, _, deciphered) = single_xor_key_decipher(buffer);
+    let ciphertext = cleartext.xor(&key);
 
-        if penalty < lowest_penalty {
-            lowest_penalty = penalty;
-            best_candidate = deciphered;
-        }
-    }
+    assert_eq!(ciphertext.to_hex(), "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f");
 
-    println!("{}", String::from_utf8_lossy(&best_candidate.0));
+    println!("{}", ciphertext.to_hex());
 }
