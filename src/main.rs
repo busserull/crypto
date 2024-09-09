@@ -3,6 +3,7 @@ mod sextet_iter;
 use sextet_iter::SextetIter;
 
 use std::collections::HashMap;
+use std::fs;
 
 struct Buffer(Vec<u8>);
 
@@ -134,15 +135,19 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let buffer =
-        Buffer::from_hex("1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736");
+    let mut lowest_penalty = f64::INFINITY;
+    let mut best_candidate = Buffer(Vec::new());
 
-    let (penalty, key, cleartext) = single_xor_key_decipher(buffer);
+    for line in fs::read_to_string("4.txt").unwrap().split_whitespace() {
+        let buffer = Buffer::from_hex(line);
 
-    println!(
-        "Key: 0x{:02x} '{}' with penalty: {:.3}",
-        key, key as char, penalty
-    );
+        let (penalty, _, deciphered) = single_xor_key_decipher(buffer);
 
-    println!("{}", String::from_utf8_lossy(&cleartext.0));
+        if penalty < lowest_penalty {
+            lowest_penalty = penalty;
+            best_candidate = deciphered;
+        }
+    }
+
+    println!("{}", String::from_utf8_lossy(&best_candidate.0));
 }
