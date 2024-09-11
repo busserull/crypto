@@ -1,3 +1,4 @@
+mod aes;
 mod base64;
 mod chunk_pair_iter;
 
@@ -6,7 +7,6 @@ use chunk_pair_iter::ChunkPairIter;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
-use std::iter::Cycle;
 
 struct Buffer(Vec<u8>);
 
@@ -183,20 +183,11 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let ciphertext = Buffer::from_base64(&fs::read_to_string("6.txt").unwrap());
+    let key: [u8; 16] = [0xf0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0];
 
-    let predicted_key_size = ciphertext.predict_repeated_xor_key_size(2, 40);
+    let key_schedule = aes::key_expansion(&key);
 
-    let blocks = ciphertext.transpose(predicted_key_size);
-
-    let key: Buffer = blocks
-        .into_iter()
-        .map(|block| single_xor_key_decipher(block))
-        .map(|(_, key_byte, _)| key_byte)
-        .collect();
-
-    let cleartext = ciphertext.xor(&key);
-
-    println!("Key: '{}'", key);
-    println!("Cleartext:\n{}", cleartext);
+    for word in key_schedule {
+        println!("{:08x}", word);
+    }
 }
