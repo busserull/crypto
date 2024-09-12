@@ -90,6 +90,22 @@ impl Buffer {
         t.into_iter().map(|buffer| Buffer(buffer)).collect()
     }
 
+    fn repeated_ecb_mismatch(&self) -> usize {
+        let mut lowest_hamming = usize::MAX;
+
+        for (i, head) in self.0.chunks_exact(16).enumerate() {
+            for block in self.0.chunks_exact(16).skip(i + 1) {
+                let hamming_distance = hamming_distance(head, block);
+
+                if hamming_distance < lowest_hamming {
+                    lowest_hamming = hamming_distance;
+                }
+            }
+        }
+
+        lowest_hamming
+    }
+
     fn printable_english_mismatch(&self) -> f64 {
         let english = [
             (b'a', 0.06633756394386363),
@@ -198,11 +214,20 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
+    let input = fs::read_to_string("8.txt").unwrap();
 
-    let ciphertext = Buffer::from_file_base64("7.txt");
+    let mut lowest_ecb_mismatch = usize::MAX;
+    let mut line_number = 0;
 
-    let cleartext = aes_ecb_decrypt(&ciphertext, &key).unwrap();
+    for (i, line) in input.lines().enumerate() {
+        let buffer = Buffer::from_hex(line);
+        let mismatch = buffer.repeated_ecb_mismatch();
 
-    println!("{}", String::from_utf8_lossy(&cleartext));
+        if mismatch < lowest_ecb_mismatch {
+            lowest_ecb_mismatch = mismatch;
+            line_number = i + 1;
+        }
+    }
+
+    println!("Line {}", line_number);
 }
