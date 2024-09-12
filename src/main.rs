@@ -215,13 +215,13 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let original = b"YELLOW SUBMARINE";
+    let ciphertext = Buffer::from_file_base64("10.txt");
 
-    let padded = pkcs7::pad(original, 20);
+    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
 
-    let unpadded = pkcs7::unpad(&padded);
+    let iv: [u8; 16] = [0; 16];
 
-    println!("{:?}", original);
-    println!("{:?}", padded);
-    println!("{:?}", unpadded);
+    let output = aes::aes_cbc_decrypt(&ciphertext, &key, &iv).unwrap();
+
+    println!("{}", String::from_utf8_lossy(&output));
 }

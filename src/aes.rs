@@ -1,3 +1,64 @@
+use super::pkcs7;
+
+pub fn aes_cbc_encrypt<I: AsRef<[u8]>, V: AsRef<[u8]>>(
+    input: I,
+    key: &AesKey,
+    iv: V,
+) -> Result<Vec<u8>, AesError> {
+    if iv.as_ref().len() != 16 {
+        return Err(AesError::WrongSizeIv);
+    }
+
+    let mut iv_block: [u8; 16] = [0; 16];
+    iv_block.copy_from_slice(iv.as_ref());
+
+    let key_schedule = key.schedule();
+
+    let mut last_cipher_block = Block(iv_block);
+    let mut ciphertext = Vec::new();
+
+    for block in BlockIter::padded(input.as_ref()) {
+        let block = block.xor(&last_cipher_block);
+        last_cipher_block = cipher(block, &key_schedule);
+
+        ciphertext.extend_from_slice(last_cipher_block.as_ref());
+    }
+
+    Ok(ciphertext)
+}
+
+pub fn aes_cbc_decrypt<I: AsRef<[u8]>, V: AsRef<[u8]>>(
+    input: I,
+    key: &AesKey,
+    iv: V,
+) -> Result<Vec<u8>, AesError> {
+    if input.as_ref().len() % 16 != 0 {
+        return Err(AesError::IrregularDecryptLength);
+    }
+
+    let mut iv_block: [u8; 16] = [0; 16];
+    iv_block.copy_from_slice(iv.as_ref());
+
+    let key_schedule = key.schedule();
+
+    let mut last_cipher_block = Block(iv_block);
+    let mut cleartext = Vec::new();
+
+    for block in BlockIter::exact(input.as_ref()) {
+        let inv_cipher_block = inv_cipher(block, &key_schedule);
+        let clear_block = inv_cipher_block.xor(&last_cipher_block);
+
+        last_cipher_block = block;
+
+        cleartext.extend_from_slice(clear_block.as_ref());
+    }
+
+    let cleartext_end = pkcs7::unpad_length(&cleartext);
+    cleartext.truncate(cleartext_end);
+
+    Ok(cleartext)
+}
+
 pub fn aes_ecb_encrypt<I: AsRef<[u8]>>(input: I, key: &AesKey) -> Vec<u8> {
     let key_schedule = key.schedule();
 
@@ -8,11 +69,11 @@ pub fn aes_ecb_encrypt<I: AsRef<[u8]>>(input: I, key: &AesKey) -> Vec<u8> {
 }
 
 pub fn aes_ecb_decrypt<I: AsRef<[u8]>>(input: I, key: &AesKey) -> Result<Vec<u8>, AesError> {
-    let key_schedule = key.schedule();
-
     if input.as_ref().len() % 16 != 0 {
         return Err(AesError::IrregularDecryptLength);
     }
+
+    let key_schedule = key.schedule();
 
     Ok(BlockIter::exact(input.as_ref())
         .into_iter()
@@ -21,21 +82,21 @@ pub fn aes_ecb_decrypt<I: AsRef<[u8]>>(input: I, key: &AesKey) -> Result<Vec<u8>
 }
 
 struct BlockIter<'a> {
-    create_padding_block: bool,
+    create_padded_block: bool,
     chunks: std::slice::ChunksExact<'a, u8>,
 }
 
 impl<'a> BlockIter<'a> {
     fn padded(input: &'a [u8]) -> Self {
         Self {
-            create_padding_block: true,
+            create_padded_block: true,
             chunks: input.chunks_exact(16),
         }
     }
 
     fn exact(input: &'a [u8]) -> Self {
         Self {
-            create_padding_block: false,
+            create_padded_block: false,
             chunks: input.chunks_exact(16),
         }
     }
@@ -45,7 +106,7 @@ impl<'a> Iterator for BlockIter<'a> {
     type Item = Block;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.chunks.next(), self.create_padding_block) {
+        match (self.chunks.next(), self.create_padded_block) {
             (Some(chunk), _) => {
                 let mut block: [u8; 16] = [0; 16];
                 block.copy_from_slice(chunk);
@@ -54,11 +115,15 @@ impl<'a> Iterator for BlockIter<'a> {
             }
 
             (None, true) => {
+                self.create_padded_block = false;
+
                 let rest = self.chunks.remainder();
                 let bytes_to_copy = rest.len();
 
                 let mut block: [u8; 16] = [0; 16];
                 (&mut block[0..bytes_to_copy]).copy_from_slice(&rest);
+
+                pkcs7::pad_inplace(&mut block, bytes_to_copy);
 
                 Some(Block(block))
             }
@@ -72,6 +137,7 @@ impl<'a> Iterator for BlockIter<'a> {
 pub enum AesError {
     NonstandardKeyLength,
     IrregularDecryptLength,
+    WrongSizeIv,
 }
 
 pub enum AesKey {
@@ -119,6 +185,7 @@ impl AesKey {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Block([u8; 16]);
 
 impl Block {
@@ -219,6 +286,22 @@ impl Block {
             *self.at(row, 2) = xmul(a, 0x0d) ^ xmul(b, 0x09) ^ xmul(c, 0x0e) ^ xmul(d, 0x0b);
             *self.at(row, 3) = xmul(a, 0x0b) ^ xmul(b, 0x0d) ^ xmul(c, 0x09) ^ xmul(d, 0x0e);
         }
+    }
+
+    fn xor(&self, rhs: &Self) -> Self {
+        let mut block: [u8; 16] = [0; 16];
+
+        for (slot, (a, b)) in block.iter_mut().zip(self.0.iter().zip(rhs.0.iter())) {
+            *slot = a ^ b;
+        }
+
+        Self(block)
+    }
+}
+
+impl AsRef<[u8]> for Block {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
