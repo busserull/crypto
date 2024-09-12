@@ -1,6 +1,7 @@
 mod aes;
 mod base64;
 mod chunk_pair_iter;
+mod pkcs7;
 
 use aes::{aes_ecb_decrypt, aes_ecb_encrypt, AesKey};
 use chunk_pair_iter::ChunkPairIter;
@@ -214,20 +215,13 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let input = fs::read_to_string("8.txt").unwrap();
+    let original = b"YELLOW SUBMARINE";
 
-    let mut lowest_ecb_mismatch = usize::MAX;
-    let mut line_number = 0;
+    let padded = pkcs7::pad(original, 20);
 
-    for (i, line) in input.lines().enumerate() {
-        let buffer = Buffer::from_hex(line);
-        let mismatch = buffer.repeated_ecb_mismatch();
+    let unpadded = pkcs7::unpad(&padded);
 
-        if mismatch < lowest_ecb_mismatch {
-            lowest_ecb_mismatch = mismatch;
-            line_number = i + 1;
-        }
-    }
-
-    println!("Line {}", line_number);
+    println!("{:?}", original);
+    println!("{:?}", padded);
+    println!("{:?}", unpadded);
 }
