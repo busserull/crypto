@@ -25,10 +25,7 @@ impl Block {
         let round_key: &[u32; 4] = round_key.try_into().unwrap();
 
         for col in 0..4 {
-            // let key_bytes = round_key[col].to_be_bytes();
-
             for row in 0..4 {
-                // *self.at(row, col) ^= key_bytes[row];
                 let key_byte = round_key[row].wrapping_shr(8 * (3 - col as u32)) as u8;
                 *self.at(row, col) ^= key_byte;
             }
@@ -42,28 +39,6 @@ impl Block {
     }
 
     fn shift_rows(&mut self) {
-        /*
-         0   1   2   3
-         4   5   6   7
-         8   9  10  11
-        12  13  14  15
-
-         0   4   8  12
-         1   5   9  13
-         2   6  10  14
-         3   7  11  15
-
-         0   4   8  12
-         5   9  13   1
-        10  14   2   6
-        15   3   7  11
-
-         0   5  10  15
-         4   9  14   3
-         8  13   2   7
-        12   1   6  11
-        */
-
         let mut copy: [u8; 16] = [0; 16];
         copy.copy_from_slice(&self.0);
 
@@ -79,10 +54,6 @@ impl Block {
         self.0[13] = copy[1];
         self.0[14] = copy[6];
         self.0[15] = copy[11];
-
-        // self.0[4..8].rotate_left(1);
-        // self.0[8..12].rotate_left(2);
-        // self.0[12..16].rotate_left(3);
     }
 
     fn mix_columns(&mut self) {
@@ -114,21 +85,11 @@ pub fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
 
     state.add_round_key(&key_schedule[0..4]);
 
-    for round in 1..rounds - 1 {
-        println!("Round {:2>} input               : {}", round, state);
-
+    for round in 1..=rounds - 1 {
         state.sub_bytes();
-        println!("Round {:2>} after S-box         : {}", round, state);
-
         state.shift_rows();
-        println!("Round {:2>} after shift-rows    : {}", round, state);
-
         state.mix_columns();
-        println!("Round {:2>} after mix columns   : {}", round, state);
-
         state.add_round_key(&key_schedule[4 * round..4 * round + 4]);
-        println!("Round {:2>} after add round-key : {}", round, state);
-        println!();
     }
 
     state.sub_bytes();
