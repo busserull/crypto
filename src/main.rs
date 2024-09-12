@@ -2,15 +2,24 @@ mod aes;
 mod base64;
 mod chunk_pair_iter;
 
+use aes::{aes_ecb_decrypt, aes_ecb_encrypt, AesKey};
 use chunk_pair_iter::ChunkPairIter;
 
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
+use std::path::Path;
 
 struct Buffer(Vec<u8>);
 
 impl Buffer {
+    fn from_file_base64<P: AsRef<Path>>(path: P) -> Self {
+        let input = std::fs::read_to_string(&path)
+            .expect(&format!("Cannot read {}", path.as_ref().to_string_lossy()));
+
+        Self::from_base64(&input)
+    }
+
     fn from_hex(string: &str) -> Self {
         Self(hex::decode(string).unwrap())
     }
@@ -134,6 +143,12 @@ impl Buffer {
     }
 }
 
+impl AsRef<[u8]> for Buffer {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl From<&[u8]> for Buffer {
     fn from(value: &[u8]) -> Self {
         Self(Vec::from(value))
@@ -183,17 +198,11 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let key: [u8; 16] = [0; 16];
+    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
 
-    let input = aes::Block([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let ciphertext = Buffer::from_file_base64("7.txt");
 
-    println!("Input: {}", input);
+    let cleartext = aes_ecb_decrypt(&ciphertext, &key).unwrap();
 
-    let output = aes::cipher(input, &aes::key_expansion(&key));
-
-    println!("Output: {}", output);
-
-    let decrypt = aes::inv_cipher(output, &aes::key_expansion(&key));
-
-    println!("Decrypt: {}", decrypt);
+    println!("{}", String::from_utf8_lossy(&cleartext));
 }

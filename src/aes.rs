@@ -1,20 +1,125 @@
-use std::fmt;
+pub fn aes_ecb_encrypt<I: AsRef<[u8]>>(input: I, key: &AesKey) -> Vec<u8> {
+    let key_schedule = key.schedule();
 
-pub struct Block(pub [u8; 16]);
+    BlockIter::padded(input.as_ref())
+        .into_iter()
+        .map(|block| cipher(block, &key_schedule))
+        .collect()
+}
 
-impl fmt::Display for Block {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for row in 0..4 {
-            for col in 0..4 {
-                write!(f, "{:02x}", self.0[4 * row + col])?;
-            }
+pub fn aes_ecb_decrypt<I: AsRef<[u8]>>(input: I, key: &AesKey) -> Result<Vec<u8>, AesError> {
+    let key_schedule = key.schedule();
 
-            write!(f, " ")?;
+    if input.as_ref().len() % 16 != 0 {
+        return Err(AesError::IrregularDecryptLength);
+    }
+
+    Ok(BlockIter::exact(input.as_ref())
+        .into_iter()
+        .map(|block| inv_cipher(block, &key_schedule))
+        .collect())
+}
+
+struct BlockIter<'a> {
+    create_padding_block: bool,
+    chunks: std::slice::ChunksExact<'a, u8>,
+}
+
+impl<'a> BlockIter<'a> {
+    fn padded(input: &'a [u8]) -> Self {
+        Self {
+            create_padding_block: true,
+            chunks: input.chunks_exact(16),
         }
+    }
 
-        Ok(())
+    fn exact(input: &'a [u8]) -> Self {
+        Self {
+            create_padding_block: false,
+            chunks: input.chunks_exact(16),
+        }
     }
 }
+
+impl<'a> Iterator for BlockIter<'a> {
+    type Item = Block;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match (self.chunks.next(), self.create_padding_block) {
+            (Some(chunk), _) => {
+                let mut block: [u8; 16] = [0; 16];
+                block.copy_from_slice(chunk);
+
+                Some(Block(block))
+            }
+
+            (None, true) => {
+                let rest = self.chunks.remainder();
+                let bytes_to_copy = rest.len();
+
+                let mut block: [u8; 16] = [0; 16];
+                (&mut block[0..bytes_to_copy]).copy_from_slice(&rest);
+
+                Some(Block(block))
+            }
+
+            (None, false) => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum AesError {
+    NonstandardKeyLength,
+    IrregularDecryptLength,
+}
+
+pub enum AesKey {
+    Aes128([u8; 16]),
+    Aes192([u8; 24]),
+    Aes256([u8; 32]),
+}
+
+impl AesKey {
+    pub fn from(bytes: &[u8]) -> Result<Self, AesError> {
+        use AesError::*;
+        use AesKey::*;
+
+        match bytes.len() {
+            16 => {
+                let mut key = [0; 16];
+                key.copy_from_slice(&bytes);
+                Ok(Aes128(key))
+            }
+
+            24 => {
+                let mut key = [0; 24];
+                key.copy_from_slice(&bytes);
+                Ok(Aes192(key))
+            }
+
+            32 => {
+                let mut key = [0; 32];
+                key.copy_from_slice(&bytes);
+                Ok(Aes256(key))
+            }
+
+            _ => Err(NonstandardKeyLength),
+        }
+    }
+
+    fn schedule(&self) -> Vec<u32> {
+        use AesKey::*;
+
+        match self {
+            Aes128(bytes) => key_expansion(bytes),
+            Aes192(bytes) => key_expansion(bytes),
+            Aes256(bytes) => key_expansion(bytes),
+        }
+    }
+}
+
+struct Block([u8; 16]);
 
 impl Block {
     fn at(&mut self, row: usize, col: usize) -> &mut u8 {
@@ -63,29 +168,6 @@ impl Block {
     }
 
     fn inv_shift_rows(&mut self) {
-        /*
-
-         0   1   2   3
-         4   5   6   7
-         8   9  10  11
-        12  13  14  15
-
-         0   4   8  12
-         1   5   9  13
-         2   6  10  14
-         3   7  11  15
-
-         0   4   8  12
-        13   1   5   9
-        10  14   2   6
-         7  11  15   3
-
-         0  13  10   7
-         4   1  14  11
-         8   5   2  15
-        12   9   6   3
-        */
-
         let mut copy: [u8; 16] = [0; 16];
         copy.copy_from_slice(&self.0);
 
@@ -115,10 +197,6 @@ impl Block {
             let mut b: [u8; 4] = [0; 4];
 
             for i in 0..4 {
-                /*
-                let h = a[i].wrapping_shr(7);
-                b[i] = a[i].wrapping_shl(1) ^ h.wrapping_mul(0x1b);
-                */
                 b[i] = xtimes(a[i]);
             }
 
@@ -144,6 +222,18 @@ impl Block {
     }
 }
 
+impl FromIterator<Block> for Vec<u8> {
+    fn from_iter<T: IntoIterator<Item = Block>>(iter: T) -> Self {
+        let mut vec = Vec::new();
+
+        for block in iter.into_iter() {
+            vec.extend_from_slice(&block.0);
+        }
+
+        vec
+    }
+}
+
 fn xtimes(byte: u8) -> u8 {
     byte.wrapping_shl(1) ^ byte.wrapping_shr(7).wrapping_mul(0x1b)
 }
@@ -155,7 +245,7 @@ fn xmul(a: u8, b: u8) -> u8 {
         ^ (b.wrapping_shr(3) & 1).wrapping_mul(xtimes(xtimes(xtimes(a))))
 }
 
-pub fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
+fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
     let rounds = key_schedule.len() / 4 - 1;
 
     state.add_round_key(&key_schedule[0..4]);
@@ -174,7 +264,7 @@ pub fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
     state
 }
 
-pub fn inv_cipher(mut state: Block, key_schedule: &[u32]) -> Block {
+fn inv_cipher(mut state: Block, key_schedule: &[u32]) -> Block {
     let rounds = key_schedule.len() / 4 - 1;
 
     state.add_round_key(&key_schedule[4 * rounds..4 * rounds + 4]);
@@ -253,7 +343,7 @@ fn subword(word: u32) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
-pub fn key_expansion(key: &[u8]) -> Vec<u32> {
+fn key_expansion(key: &[u8]) -> Vec<u32> {
     let mut key_words: Vec<u32> = key
         .chunks_exact(4)
         .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
