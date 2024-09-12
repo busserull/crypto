@@ -38,6 +38,12 @@ impl Block {
         }
     }
 
+    fn inv_sub_bytes(&mut self) {
+        for byte in self.0.iter_mut() {
+            *byte = inv_sbox(*byte);
+        }
+    }
+
     fn shift_rows(&mut self) {
         let mut copy: [u8; 16] = [0; 16];
         copy.copy_from_slice(&self.0);
@@ -56,6 +62,47 @@ impl Block {
         self.0[15] = copy[11];
     }
 
+    fn inv_shift_rows(&mut self) {
+        /*
+
+         0   1   2   3
+         4   5   6   7
+         8   9  10  11
+        12  13  14  15
+
+         0   4   8  12
+         1   5   9  13
+         2   6  10  14
+         3   7  11  15
+
+         0   4   8  12
+        13   1   5   9
+        10  14   2   6
+         7  11  15   3
+
+         0  13  10   7
+         4   1  14  11
+         8   5   2  15
+        12   9   6   3
+        */
+
+        let mut copy: [u8; 16] = [0; 16];
+        copy.copy_from_slice(&self.0);
+
+        self.0[1] = copy[13];
+        self.0[2] = copy[10];
+        self.0[3] = copy[7];
+        self.0[5] = copy[1];
+        self.0[6] = copy[14];
+        self.0[7] = copy[11];
+        self.0[9] = copy[5];
+        self.0[10] = copy[2];
+        self.0[11] = copy[15];
+        self.0[13] = copy[9];
+        self.0[14] = copy[6];
+        self.0[15] = copy[3];
+    }
+
     fn mix_columns(&mut self) {
         for row in 0..4 {
             let a: [u8; 4] = [
@@ -68,8 +115,11 @@ impl Block {
             let mut b: [u8; 4] = [0; 4];
 
             for i in 0..4 {
+                /*
                 let h = a[i].wrapping_shr(7);
                 b[i] = a[i].wrapping_shl(1) ^ h.wrapping_mul(0x1b);
+                */
+                b[i] = xtimes(a[i]);
             }
 
             *self.at(row, 0) = b[0] ^ a[3] ^ a[2] ^ b[1] ^ a[1];
@@ -78,6 +128,31 @@ impl Block {
             *self.at(row, 3) = b[3] ^ a[2] ^ a[1] ^ b[0] ^ a[0];
         }
     }
+
+    fn inv_mix_columns(&mut self) {
+        for row in 0..4 {
+            let a = *self.at(row, 0);
+            let b = *self.at(row, 1);
+            let c = *self.at(row, 2);
+            let d = *self.at(row, 3);
+
+            *self.at(row, 0) = xmul(a, 0x0e) ^ xmul(b, 0x0b) ^ xmul(c, 0x0d) ^ xmul(d, 0x09);
+            *self.at(row, 1) = xmul(a, 0x09) ^ xmul(b, 0x0e) ^ xmul(c, 0x0b) ^ xmul(d, 0x0d);
+            *self.at(row, 2) = xmul(a, 0x0d) ^ xmul(b, 0x09) ^ xmul(c, 0x0e) ^ xmul(d, 0x0b);
+            *self.at(row, 3) = xmul(a, 0x0b) ^ xmul(b, 0x0d) ^ xmul(c, 0x09) ^ xmul(d, 0x0e);
+        }
+    }
+}
+
+fn xtimes(byte: u8) -> u8 {
+    byte.wrapping_shl(1) ^ byte.wrapping_shr(7).wrapping_mul(0x1b)
+}
+
+fn xmul(a: u8, b: u8) -> u8 {
+    (b & 1).wrapping_mul(a)
+        ^ (b.wrapping_shr(1) & 1).wrapping_mul(xtimes(a))
+        ^ (b.wrapping_shr(2) & 1).wrapping_mul(xtimes(xtimes(a)))
+        ^ (b.wrapping_shr(3) & 1).wrapping_mul(xtimes(xtimes(xtimes(a))))
 }
 
 pub fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
@@ -95,6 +170,25 @@ pub fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
     state.sub_bytes();
     state.shift_rows();
     state.add_round_key(&key_schedule[4 * rounds..4 * rounds + 4]);
+
+    state
+}
+
+pub fn inv_cipher(mut state: Block, key_schedule: &[u32]) -> Block {
+    let rounds = key_schedule.len() / 4 - 1;
+
+    state.add_round_key(&key_schedule[4 * rounds..4 * rounds + 4]);
+
+    for round in (1..rounds).rev() {
+        state.inv_shift_rows();
+        state.inv_sub_bytes();
+        state.add_round_key(&key_schedule[4 * round..4 * round + 4]);
+        state.inv_mix_columns();
+    }
+
+    state.inv_shift_rows();
+    state.inv_sub_bytes();
+    state.add_round_key(&key_schedule[0..4]);
 
     state
 }

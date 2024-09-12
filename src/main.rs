@@ -185,11 +185,15 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 fn main() {
     let key: [u8; 16] = [0; 16];
 
-    let input = aes::Block([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    let input = aes::Block([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
     println!("Input: {}", input);
 
     let output = aes::cipher(input, &aes::key_expansion(&key));
 
     println!("Output: {}", output);
+
+    let decrypt = aes::inv_cipher(output, &aes::key_expansion(&key));
+
+    println!("Decrypt: {}", decrypt);
 }
