@@ -1,7 +1,141 @@
-struct Block([u8; 16]);
+use std::fmt;
 
-fn cipher(in_block: Block, rounds: usize, key_schedule: &[u32]) -> Block {
-    in_block
+pub struct Block(pub [u8; 16]);
+
+impl fmt::Display for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for row in 0..4 {
+            for col in 0..4 {
+                write!(f, "{:02x}", self.0[4 * row + col])?;
+            }
+
+            write!(f, " ")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Block {
+    fn at(&mut self, row: usize, col: usize) -> &mut u8 {
+        &mut self.0[4 * row + col]
+    }
+
+    fn add_round_key(&mut self, round_key: &[u32]) {
+        let round_key: &[u32; 4] = round_key.try_into().unwrap();
+
+        for col in 0..4 {
+            // let key_bytes = round_key[col].to_be_bytes();
+
+            for row in 0..4 {
+                // *self.at(row, col) ^= key_bytes[row];
+                let key_byte = round_key[row].wrapping_shr(8 * (3 - col as u32)) as u8;
+                *self.at(row, col) ^= key_byte;
+            }
+        }
+    }
+
+    fn sub_bytes(&mut self) {
+        for byte in self.0.iter_mut() {
+            *byte = sbox(*byte);
+        }
+    }
+
+    fn shift_rows(&mut self) {
+        /*
+         0   1   2   3
+         4   5   6   7
+         8   9  10  11
+        12  13  14  15
+
+         0   4   8  12
+         1   5   9  13
+         2   6  10  14
+         3   7  11  15
+
+         0   4   8  12
+         5   9  13   1
+        10  14   2   6
+        15   3   7  11
+
+         0   5  10  15
+         4   9  14   3
+         8  13   2   7
+        12   1   6  11
+        */
+
+        let mut copy: [u8; 16] = [0; 16];
+        copy.copy_from_slice(&self.0);
+
+        self.0[1] = copy[5];
+        self.0[2] = copy[10];
+        self.0[3] = copy[15];
+        self.0[5] = copy[9];
+        self.0[6] = copy[14];
+        self.0[7] = copy[3];
+        self.0[9] = copy[13];
+        self.0[10] = copy[2];
+        self.0[11] = copy[7];
+        self.0[13] = copy[1];
+        self.0[14] = copy[6];
+        self.0[15] = copy[11];
+
+        // self.0[4..8].rotate_left(1);
+        // self.0[8..12].rotate_left(2);
+        // self.0[12..16].rotate_left(3);
+    }
+
+    fn mix_columns(&mut self) {
+        for row in 0..4 {
+            let a: [u8; 4] = [
+                *self.at(row, 0),
+                *self.at(row, 1),
+                *self.at(row, 2),
+                *self.at(row, 3),
+            ];
+
+            let mut b: [u8; 4] = [0; 4];
+
+            for i in 0..4 {
+                let h = a[i].wrapping_shr(7);
+                b[i] = a[i].wrapping_shl(1) ^ h.wrapping_mul(0x1b);
+            }
+
+            *self.at(row, 0) = b[0] ^ a[3] ^ a[2] ^ b[1] ^ a[1];
+            *self.at(row, 1) = b[1] ^ a[0] ^ a[3] ^ b[2] ^ a[2];
+            *self.at(row, 2) = b[2] ^ a[1] ^ a[0] ^ b[3] ^ a[3];
+            *self.at(row, 3) = b[3] ^ a[2] ^ a[1] ^ b[0] ^ a[0];
+        }
+    }
+}
+
+pub fn cipher(mut state: Block, key_schedule: &[u32]) -> Block {
+    let rounds = key_schedule.len() / 4 - 1;
+
+    state.add_round_key(&key_schedule[0..4]);
+
+    for round in 1..rounds - 1 {
+        println!("Round {:2>} input               : {}", round, state);
+
+        state.sub_bytes();
+        println!("Round {:2>} after S-box         : {}", round, state);
+
+        state.shift_rows();
+        println!("Round {:2>} after shift-rows    : {}", round, state);
+
+        state.mix_columns();
+        println!("Round {:2>} after mix columns   : {}", round, state);
+
+        state.add_round_key(&key_schedule[4 * round..4 * round + 4]);
+        println!("Round {:2>} after add round-key : {}", round, state);
+        println!();
+    }
+
+    state.sub_bytes();
+    state.shift_rows();
+    state.add_round_key(&key_schedule[4 * rounds..4 * rounds + 4]);
+
+    state
 }
 
 fn sbox(byte: u8) -> u8 {
@@ -99,7 +233,6 @@ pub fn key_expansion(key: &[u8]) -> Vec<u32> {
         if i % nk == 0 {
             word = subword(word.rotate_left(8)) ^ rcon[i / nk];
         } else if nk > 6 && i % nk == 4 {
-            panic!();
             word = subword(word);
         }
 

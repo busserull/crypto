@@ -183,11 +183,11 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
 }
 
 fn main() {
-    let key: [u8; 16] = [0xf0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0];
+    let key: [u8; 16] = [0; 16];
 
-    let key_schedule = aes::key_expansion(&key);
+    let input = aes::Block([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
-    for word in key_schedule {
-        println!("{:08x}", word);
-    }
+    let output = aes::cipher(input, &aes::key_expansion(&key));
+
+    println!("Output: {}", output);
 }
