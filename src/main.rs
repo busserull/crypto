@@ -219,46 +219,62 @@ fn random_aes_key() -> AesKey {
     AesKey::from(&urandom::bytes(16)).unwrap()
 }
 
-fn encryption_oracle<I: AsRef<[u8]>>(input: I) -> (bool, Vec<u8>) {
-    let key = random_aes_key();
-
-    let prepend_count = urandom::range(5, 11);
-    let append_count = urandom::range(5, 11);
-
-    let head = urandom::bytes(prepend_count as usize);
-    let tail = urandom::bytes(append_count as usize);
-
+fn encryption_oracle<H, I>(head: H, cleartext: I, key: &AesKey) -> Vec<u8>
+where
+    H: AsRef<[u8]>,
+    I: AsRef<[u8]>,
+{
     let to_encrypt: Vec<u8> = head
+        .as_ref()
         .into_iter()
-        .chain(input.as_ref().iter().copied())
-        .chain(tail.into_iter())
+        .copied()
+        .chain(cleartext.as_ref().into_iter().copied())
         .collect();
 
-    if urandom::coin_flip() {
-        let iv = urandom::bytes(16);
-        (true, aes::aes_cbc_encrypt(&to_encrypt, &key, &iv).unwrap())
-    } else {
-        (false, aes::aes_ecb_encrypt(&to_encrypt, &key))
-    }
+    aes::aes_ecb_encrypt(&to_encrypt, key)
 }
 
 fn main() {
-    let rounds = 1024;
+    let unknown_cleartext = Buffer::from_file_base64("12.txt");
+    let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
 
-    let correct_guesses = (0..rounds)
-        .into_iter()
-        .filter_map(|_| {
-            let (cbc_used, ciphertext) = encryption_oracle(&[0; 64]);
-            let ciphertext = Buffer(ciphertext);
+    /* Discover block size of cipher */
+    let unmodified_size = encryption_oracle(&[], &unknown_cleartext, &unknown_key).len();
 
-            let assumed_cbc = ciphertext.repeated_ecb_mismatch() != 0;
+    let block_size = (1..)
+        .map(|count| encryption_oracle(&vec![0; count], &unknown_cleartext, &unknown_key).len())
+        .filter_map(|size| (size != unmodified_size).then_some(size - unmodified_size))
+        .next()
+        .unwrap();
 
-            (cbc_used == assumed_cbc).then_some(1)
-        })
-        .count();
+    println!("Cipher block size: {} bytes", block_size);
 
-    println!(
-        "Oracle {:3.0}% correct",
-        100.0 * correct_guesses as f64 / rounds as f64
+    /* Detect the use of ECB */
+    let using_ecb = Buffer(encryption_oracle(
+        &vec![0; 4 * block_size],
+        &unknown_cleartext,
+        &unknown_key,
+    ))
+    .repeated_ecb_mismatch()
+        == 0;
+
+    println!("Using ECB? {}", using_ecb);
+
+    /* Determine first byte in cleartext */
+    let mut test_block = vec![0; block_size];
+
+    let one_short = encryption_oracle(
+        &test_block[0..block_size - 1],
+        &unknown_cleartext,
+        &unknown_key,
     );
+
+    let mut response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+
+    while &response[0..block_size] != &one_short[0..block_size] {
+        test_block[block_size - 1] += 1;
+        response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+    }
+
+    println!("First byte is {}", test_block[block_size - 1]);
 }
