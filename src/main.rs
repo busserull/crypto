@@ -2,6 +2,7 @@ mod aes;
 mod base64;
 mod chunk_pair_iter;
 mod pkcs7;
+mod urandom;
 
 use aes::{aes_ecb_decrypt, aes_ecb_encrypt, AesKey};
 use chunk_pair_iter::ChunkPairIter;
@@ -214,14 +215,50 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
     (lowest_penalty, best_key, deciphered)
 }
 
+fn random_aes_key() -> AesKey {
+    AesKey::from(&urandom::bytes(16)).unwrap()
+}
+
+fn encryption_oracle<I: AsRef<[u8]>>(input: I) -> (bool, Vec<u8>) {
+    let key = random_aes_key();
+
+    let prepend_count = urandom::range(5, 11);
+    let append_count = urandom::range(5, 11);
+
+    let head = urandom::bytes(prepend_count as usize);
+    let tail = urandom::bytes(append_count as usize);
+
+    let to_encrypt: Vec<u8> = head
+        .into_iter()
+        .chain(input.as_ref().iter().copied())
+        .chain(tail.into_iter())
+        .collect();
+
+    if urandom::coin_flip() {
+        let iv = urandom::bytes(16);
+        (true, aes::aes_cbc_encrypt(&to_encrypt, &key, &iv).unwrap())
+    } else {
+        (false, aes::aes_ecb_encrypt(&to_encrypt, &key))
+    }
+}
+
 fn main() {
-    let ciphertext = Buffer::from_file_base64("10.txt");
+    let rounds = 1024;
 
-    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
+    let correct_guesses = (0..rounds)
+        .into_iter()
+        .filter_map(|_| {
+            let (cbc_used, ciphertext) = encryption_oracle(&[0; 64]);
+            let ciphertext = Buffer(ciphertext);
 
-    let iv: [u8; 16] = [0; 16];
+            let assumed_cbc = ciphertext.repeated_ecb_mismatch() != 0;
 
-    let output = aes::aes_cbc_decrypt(&ciphertext, &key, &iv).unwrap();
+            (cbc_used == assumed_cbc).then_some(1)
+        })
+        .count();
 
-    println!("{}", String::from_utf8_lossy(&output));
+    println!(
+        "Oracle {:3.0}% correct",
+        100.0 * correct_guesses as f64 / rounds as f64
+    );
 }
