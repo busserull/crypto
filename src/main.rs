@@ -263,18 +263,28 @@ fn main() {
     /* Determine first byte in cleartext */
     let mut test_block = vec![0; block_size];
 
-    let one_short = encryption_oracle(
-        &test_block[0..block_size - 1],
-        &unknown_cleartext,
-        &unknown_key,
-    );
+    for i in 1..=block_size {
+        test_block.rotate_left(1);
 
-    let mut response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+        let one_short = encryption_oracle(
+            &test_block[0..block_size - i],
+            &unknown_cleartext,
+            &unknown_key,
+        );
 
-    while &response[0..block_size] != &one_short[0..block_size] {
-        test_block[block_size - 1] += 1;
-        response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+        loop {
+            let test_response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+
+            if &test_response[0..block_size] == &one_short[0..block_size] {
+                break;
+            }
+
+            test_block[block_size - 1] += 1;
+        }
     }
 
-    println!("First byte is {}", test_block[block_size - 1]);
+    println!(
+        "Decrypted first block: {}",
+        String::from_utf8_lossy(&test_block)
+    );
 }
