@@ -1,11 +1,13 @@
 mod aes;
 mod base64;
 mod chunk_pair_iter;
+mod key_value;
 mod pkcs7;
 mod urandom;
 
 use aes::{aes_ecb_decrypt, aes_ecb_encrypt, AesKey};
 use chunk_pair_iter::ChunkPairIter;
+use key_value::KeyValue;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -234,7 +236,27 @@ where
     aes::aes_ecb_encrypt(&to_encrypt, key)
 }
 
+fn profile_for(email: &str) -> KeyValue {
+    let email = email.replace(['&', '='], "");
+    KeyValue::from(&[("email", &email), ("uid", "10"), ("role", "user")])
+}
+
 fn main() {
+    let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
+
+    let encoded = profile_for("alice@example.com").to_string();
+
+    let encrypted = aes::aes_ecb_encrypt(&encoded, &unknown_key);
+
+    println!("{}", String::from_utf8_lossy(&encrypted));
+
+    let decoded = KeyValue::parse(
+        &String::from_utf8(aes::aes_ecb_decrypt(&encrypted, &unknown_key).unwrap()).unwrap(),
+    );
+
+    println!("{}", decoded);
+
+    /*
     let unknown_cleartext = Buffer::from_file_base64("12.txt");
     let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
 
@@ -287,4 +309,5 @@ fn main() {
         "Decrypted first block: {}",
         String::from_utf8_lossy(&test_block)
     );
+    */
 }
