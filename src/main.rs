@@ -244,70 +244,22 @@ fn profile_for(email: &str) -> KeyValue {
 fn main() {
     let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
 
-    let encoded = profile_for("alice@example.com").to_string();
+    let admin_cipher = aes::aes_ecb_encrypt(
+        &profile_for("          admin           ").to_string(),
+        &unknown_key,
+    );
 
-    let encrypted = aes::aes_ecb_encrypt(&encoded, &unknown_key);
+    let email = "a@example.com";
+    let profile_cipher = aes::aes_ecb_encrypt(&profile_for(&email).to_string(), &unknown_key);
 
-    println!("{}", String::from_utf8_lossy(&encrypted));
+    let mut exploit_cipher = Vec::new();
+
+    exploit_cipher.extend_from_slice(&profile_cipher[0..32]);
+    exploit_cipher.extend_from_slice(&admin_cipher[16..32]);
 
     let decoded = KeyValue::parse(
-        &String::from_utf8(aes::aes_ecb_decrypt(&encrypted, &unknown_key).unwrap()).unwrap(),
+        &String::from_utf8(aes::aes_ecb_decrypt(&exploit_cipher, &unknown_key).unwrap()).unwrap(),
     );
 
     println!("{}", decoded);
-
-    /*
-    let unknown_cleartext = Buffer::from_file_base64("12.txt");
-    let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
-
-    /* Discover block size of cipher */
-    let unmodified_size = encryption_oracle(&[], &unknown_cleartext, &unknown_key).len();
-
-    let block_size = (1..)
-        .map(|count| encryption_oracle(&vec![0; count], &unknown_cleartext, &unknown_key).len())
-        .filter_map(|size| (size != unmodified_size).then_some(size - unmodified_size))
-        .next()
-        .unwrap();
-
-    println!("Cipher block size: {} bytes", block_size);
-
-    /* Detect the use of ECB */
-    let using_ecb = Buffer(encryption_oracle(
-        &vec![0; 4 * block_size],
-        &unknown_cleartext,
-        &unknown_key,
-    ))
-    .repeated_ecb_mismatch()
-        == 0;
-
-    println!("Using ECB? {}", using_ecb);
-
-    /* Determine first byte in cleartext */
-    let mut test_block = vec![0; block_size];
-
-    for i in 1..=block_size {
-        test_block.rotate_left(1);
-
-        let one_short = encryption_oracle(
-            &test_block[0..block_size - i],
-            &unknown_cleartext,
-            &unknown_key,
-        );
-
-        loop {
-            let test_response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
-
-            if &test_response[0..block_size] == &one_short[0..block_size] {
-                break;
-            }
-
-            test_block[block_size - 1] += 1;
-        }
-    }
-
-    println!(
-        "Decrypted first block: {}",
-        String::from_utf8_lossy(&test_block)
-    );
-    */
 }
