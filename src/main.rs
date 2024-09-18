@@ -315,72 +315,13 @@ fn find_marker(input: &[u8], marker: &[u8]) -> Option<usize> {
 }
 
 fn main() {
-    let unknown_cleartext = Buffer::from_file_base64("12.txt");
-    let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
+    assert_eq!(
+        pkcs7::unpad(b"ICE ICE BABY\x04\x04\x04\x04"),
+        b"ICE ICE BABY"
+    );
 
-    let block_size = 16;
-
-    /* Determine length of ciphertext */
-    let cleartext_blocks = snoop_block_count(unknown_cleartext.as_ref(), &unknown_key, block_size);
-
-    /* Create marker */
-    let plaintext_marker = b"YELLOW SUBMARINE";
-
-    assert_eq!(block_size, plaintext_marker.len());
-
-    let marker = create_oracle_marker(unknown_cleartext.as_ref(), &unknown_key, plaintext_marker);
-
-    /* Test vector */
-    let mut test_vector: Vec<u8> = plaintext_marker
-        .iter()
-        .copied()
-        .chain([0].repeat(cleartext_blocks * block_size))
-        .collect();
-
-    let mut byte_count = 0;
-
-    'byte_breaker: for i in 1..=(cleartext_blocks * block_size) {
-        byte_count += 1;
-
-        test_vector[block_size..].rotate_left(1);
-
-        let mut short = vec![0];
-
-        while find_marker(&short, &marker).is_none() {
-            short = encryption_oracle(
-                &test_vector[..test_vector.len() - i],
-                &unknown_cleartext,
-                &unknown_key,
-            );
-        }
-
-        let short_start = find_marker(&short, &marker).unwrap() + cleartext_blocks * block_size;
-        let short_block = &short[short_start..short_start + block_size];
-
-        loop {
-            let mut test = vec![0];
-
-            while find_marker(&test, &marker).is_none() {
-                test = encryption_oracle(&test_vector, &unknown_cleartext, &unknown_key);
-            }
-
-            let test_start = find_marker(&test, &marker).unwrap() + cleartext_blocks * block_size;
-            let test_block = &test[test_start..test_start + block_size];
-
-            if short_block == test_block {
-                break;
-            }
-
-            if let (next_byte, false) = test_vector.last().unwrap().overflowing_add(1) {
-                *test_vector.last_mut().unwrap() = next_byte;
-            } else {
-                break 'byte_breaker;
-            }
-        }
-    }
-
-    println!(
-        "{}",
-        String::from_utf8_lossy(&test_vector[block_size..=block_size + byte_count])
+    assert_eq!(
+        pkcs7::unpad(b"ICE ICE BABY\x05\x05\x05\x05"),
+        b"ICE ICE BABY\x05\x05\x05\x05"
     );
 }
