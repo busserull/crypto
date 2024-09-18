@@ -12,6 +12,7 @@ use key_value::KeyValue;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
+use std::hint::black_box;
 use std::path::Path;
 
 struct Buffer(Vec<u8>);
@@ -94,20 +95,35 @@ impl Buffer {
         t.into_iter().map(|buffer| Buffer(buffer)).collect()
     }
 
-    fn repeated_ecb_mismatch(&self) -> usize {
-        let mut lowest_hamming = usize::MAX;
+    fn repeated_block_start(&self, block_size: usize) -> Option<usize> {
+        for start in 0..self.0.len() {
+            if start + 2 * block_size > self.0.len() {
+                return None;
+            }
 
-        for (i, head) in self.0.chunks_exact(16).enumerate() {
-            for block in self.0.chunks_exact(16).skip(i + 1) {
-                let hamming_distance = hamming_distance(head, block);
+            let head = &self.0[start..start + block_size];
+            let next = &self.0[start + block_size..start + 2 * block_size];
 
-                if hamming_distance < lowest_hamming {
-                    lowest_hamming = hamming_distance;
-                }
+            if head == next {
+                return Some(start);
             }
         }
 
-        lowest_hamming
+        None
+    }
+
+    fn rfind(&self, sequence: &[u8]) -> Option<usize> {
+        if sequence.len() > self.0.len() {
+            return None;
+        }
+
+        for start in (0..self.0.len() - sequence.len()).rev() {
+            if &self.0[start..start + sequence.len()] == sequence {
+                return Some(start);
+            }
+        }
+
+        None
     }
 
     fn printable_english_mismatch(&self) -> f64 {
@@ -217,49 +233,142 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
     (lowest_penalty, best_key, deciphered)
 }
 
-fn random_aes_key() -> AesKey {
-    AesKey::from(&urandom::bytes(16)).unwrap()
-}
-
 fn encryption_oracle<H, I>(head: H, cleartext: I, key: &AesKey) -> Vec<u8>
 where
     H: AsRef<[u8]>,
     I: AsRef<[u8]>,
 {
-    let to_encrypt: Vec<u8> = head
-        .as_ref()
+    let random_byte_count = urandom::range(5, 19);
+    let random_bytes = urandom::bytes(random_byte_count as usize);
+    let random_bytes = [];
+
+    let to_encrypt: Vec<u8> = random_bytes
         .into_iter()
-        .copied()
+        .chain(head.as_ref().into_iter().copied())
         .chain(cleartext.as_ref().into_iter().copied())
         .collect();
 
     aes::aes_ecb_encrypt(&to_encrypt, key)
 }
 
-fn profile_for(email: &str) -> KeyValue {
-    let email = email.replace(['&', '='], "");
-    KeyValue::from(&[("email", &email), ("uid", "10"), ("role", "user")])
+fn find_last_repeated_block(input: &[u8], block_size: usize) -> Option<usize> {
+    if 2 * block_size > input.len() {
+        return None;
+    }
+
+    let mut found: Option<usize> = None;
+
+    for (i, head) in input.chunks_exact(block_size).enumerate() {
+        for (j, next) in input.chunks_exact(block_size).enumerate().skip(i + 1) {
+            match (found.is_some(), head == next) {
+                (_, true) => found = Some(j * block_size),
+                (true, false) => return found,
+                _ => (),
+            }
+        }
+    }
+
+    found
+}
+
+fn has_signature(input: &[u8], block_size: usize) -> bool {
+    let last_preamble = match find_last_repeated_block(input, block_size) {
+        Some(index) => index,
+        None => return false,
+    };
+
+    if last_preamble + 3 * block_size > input.len() {
+        return false;
+    }
+
+    let head = &input[last_preamble..last_preamble + block_size];
+    let tail = &input[last_preamble + 2 * block_size..last_preamble + 3 * block_size];
+
+    head == tail
+}
+
+fn snoop_block_count(block_size: usize, text: &[u8], key: &AesKey) -> usize {
+    let mut length_test_cipher = vec![0];
+    let mut last_zero_block_start: Option<usize> = None;
+
+    while last_zero_block_start.is_none() {
+        length_test_cipher = encryption_oracle(&vec![0; 2 * block_size], &text, &key);
+        last_zero_block_start = find_last_repeated_block(&length_test_cipher, block_size);
+    }
+
+    (length_test_cipher.len() - last_zero_block_start.unwrap() - block_size) / block_size
 }
 
 fn main() {
+    let unknown_cleartext = Buffer::from_file_base64("12.txt");
     let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
 
-    let admin_cipher = aes::aes_ecb_encrypt(
-        &profile_for("          admin           ").to_string(),
-        &unknown_key,
+    let block_size = 16;
+
+    /* Detect the use of ECB */
+    let using_ecb = find_last_repeated_block(
+        &encryption_oracle(&vec![0; 3 * block_size], &unknown_cleartext, &unknown_key),
+        block_size,
+    )
+    .is_some();
+
+    println!("Using ECB? {}", using_ecb);
+
+    /* Determine length of ciphertext */
+    let cleartext_blocks = snoop_block_count(block_size, &unknown_cleartext.as_ref(), &unknown_key);
+
+    /* Test block consists of header, signature, tail, and working area */
+    let mut test_block: Vec<u8> = [0]
+        .repeat(3 * block_size)
+        .into_iter()
+        .chain(b"YELLOW SUBMARINE".into_iter().copied())
+        .chain([0].repeat((1 + cleartext_blocks) * block_size))
+        .collect();
+
+    // while !has_signature(&c, block_size) {
+    //     count += 1;
+    //     c = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+    // }
+
+    // println!("In {} iterations", count);
+    // todo!();
+
+    for i in 1..=(cleartext_blocks * block_size) {
+        println!("Round {}", i);
+        let range_start = test_block.len() - cleartext_blocks * block_size;
+        test_block[range_start..].rotate_left(1);
+
+        let mut short = vec![0];
+
+        while !has_signature(&short, block_size) {
+            short = encryption_oracle(
+                &test_block[0..test_block.len() - i],
+                &unknown_cleartext,
+                &unknown_key,
+            );
+        }
+
+        let cipher = &short[short.len() - block_size..];
+
+        loop {
+            let mut response = vec![0];
+
+            while !has_signature(&response, block_size) {
+                response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+            }
+
+            let test = &response[response.len() - block_size..];
+
+            if test == cipher {
+                break;
+            }
+
+            *test_block.last_mut().unwrap() += 1;
+        }
+    }
+
+    println!(
+        "Decrypted first block: {}",
+        String::from_utf8_lossy(&test_block)
     );
-
-    let email = "a@example.com";
-    let profile_cipher = aes::aes_ecb_encrypt(&profile_for(&email).to_string(), &unknown_key);
-
-    let mut exploit_cipher = Vec::new();
-
-    exploit_cipher.extend_from_slice(&profile_cipher[0..32]);
-    exploit_cipher.extend_from_slice(&admin_cipher[16..32]);
-
-    let decoded = KeyValue::parse(
-        &String::from_utf8(aes::aes_ecb_decrypt(&exploit_cipher, &unknown_key).unwrap()).unwrap(),
-    );
-
-    println!("{}", decoded);
 }
