@@ -240,7 +240,6 @@ where
 {
     let random_byte_count = urandom::range(5, 19);
     let random_bytes = urandom::bytes(random_byte_count as usize);
-    let random_bytes = [];
 
     let to_encrypt: Vec<u8> = random_bytes
         .into_iter()
@@ -271,23 +270,7 @@ fn find_last_repeated_block(input: &[u8], block_size: usize) -> Option<usize> {
     found
 }
 
-fn has_signature(input: &[u8], block_size: usize) -> bool {
-    let last_preamble = match find_last_repeated_block(input, block_size) {
-        Some(index) => index,
-        None => return false,
-    };
-
-    if last_preamble + 3 * block_size > input.len() {
-        return false;
-    }
-
-    let head = &input[last_preamble..last_preamble + block_size];
-    let tail = &input[last_preamble + 2 * block_size..last_preamble + 3 * block_size];
-
-    head == tail
-}
-
-fn snoop_block_count(block_size: usize, text: &[u8], key: &AesKey) -> usize {
+fn snoop_block_count(text: &[u8], key: &AesKey, block_size: usize) -> usize {
     let mut length_test_cipher = vec![0];
     let mut last_zero_block_start: Option<usize> = None;
 
@@ -299,76 +282,105 @@ fn snoop_block_count(block_size: usize, text: &[u8], key: &AesKey) -> usize {
     (length_test_cipher.len() - last_zero_block_start.unwrap() - block_size) / block_size
 }
 
+fn create_oracle_marker(text: &[u8], key: &AesKey, plaintext_marker: &[u8]) -> Vec<u8> {
+    let block_size = plaintext_marker.len();
+
+    let test: Vec<u8> = [0]
+        .repeat(2 * block_size)
+        .into_iter()
+        .chain(plaintext_marker.iter().copied())
+        .collect();
+
+    let mut test_cipher = vec![0];
+    let mut last_zero_block_start: Option<usize> = None;
+
+    while last_zero_block_start.is_none() {
+        test_cipher = encryption_oracle(&test, &text, &key);
+        last_zero_block_start = find_last_repeated_block(&test_cipher, block_size);
+    }
+
+    let i = last_zero_block_start.unwrap();
+
+    Vec::from(&test_cipher[i + block_size..i + 2 * block_size])
+}
+
+fn find_marker(input: &[u8], marker: &[u8]) -> Option<usize> {
+    for (i, next) in input.chunks_exact(marker.len()).enumerate() {
+        if next == marker {
+            return Some(i * marker.len());
+        }
+    }
+
+    None
+}
+
 fn main() {
     let unknown_cleartext = Buffer::from_file_base64("12.txt");
     let unknown_key = AesKey::from(&urandom::bytes(16)).unwrap();
 
     let block_size = 16;
 
-    /* Detect the use of ECB */
-    let using_ecb = find_last_repeated_block(
-        &encryption_oracle(&vec![0; 3 * block_size], &unknown_cleartext, &unknown_key),
-        block_size,
-    )
-    .is_some();
-
-    println!("Using ECB? {}", using_ecb);
-
     /* Determine length of ciphertext */
-    let cleartext_blocks = snoop_block_count(block_size, &unknown_cleartext.as_ref(), &unknown_key);
+    let cleartext_blocks = snoop_block_count(unknown_cleartext.as_ref(), &unknown_key, block_size);
 
-    /* Test block consists of header, signature, tail, and working area */
-    let mut test_block: Vec<u8> = [0]
-        .repeat(3 * block_size)
-        .into_iter()
-        .chain(b"YELLOW SUBMARINE".into_iter().copied())
-        .chain([0].repeat((1 + cleartext_blocks) * block_size))
+    /* Create marker */
+    let plaintext_marker = b"YELLOW SUBMARINE";
+
+    assert_eq!(block_size, plaintext_marker.len());
+
+    let marker = create_oracle_marker(unknown_cleartext.as_ref(), &unknown_key, plaintext_marker);
+
+    /* Test vector */
+    let mut test_vector: Vec<u8> = plaintext_marker
+        .iter()
+        .copied()
+        .chain([0].repeat(cleartext_blocks * block_size))
         .collect();
 
-    // while !has_signature(&c, block_size) {
-    //     count += 1;
-    //     c = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
-    // }
+    let mut byte_count = 0;
 
-    // println!("In {} iterations", count);
-    // todo!();
+    'byte_breaker: for i in 1..=(cleartext_blocks * block_size) {
+        byte_count += 1;
 
-    for i in 1..=(cleartext_blocks * block_size) {
-        println!("Round {}", i);
-        let range_start = test_block.len() - cleartext_blocks * block_size;
-        test_block[range_start..].rotate_left(1);
+        test_vector[block_size..].rotate_left(1);
 
         let mut short = vec![0];
 
-        while !has_signature(&short, block_size) {
+        while find_marker(&short, &marker).is_none() {
             short = encryption_oracle(
-                &test_block[0..test_block.len() - i],
+                &test_vector[..test_vector.len() - i],
                 &unknown_cleartext,
                 &unknown_key,
             );
         }
 
-        let cipher = &short[short.len() - block_size..];
+        let short_start = find_marker(&short, &marker).unwrap() + cleartext_blocks * block_size;
+        let short_block = &short[short_start..short_start + block_size];
 
         loop {
-            let mut response = vec![0];
+            let mut test = vec![0];
 
-            while !has_signature(&response, block_size) {
-                response = encryption_oracle(&test_block, &unknown_cleartext, &unknown_key);
+            while find_marker(&test, &marker).is_none() {
+                test = encryption_oracle(&test_vector, &unknown_cleartext, &unknown_key);
             }
 
-            let test = &response[response.len() - block_size..];
+            let test_start = find_marker(&test, &marker).unwrap() + cleartext_blocks * block_size;
+            let test_block = &test[test_start..test_start + block_size];
 
-            if test == cipher {
+            if short_block == test_block {
                 break;
             }
 
-            *test_block.last_mut().unwrap() += 1;
+            if let (next_byte, false) = test_vector.last().unwrap().overflowing_add(1) {
+                *test_vector.last_mut().unwrap() = next_byte;
+            } else {
+                break 'byte_breaker;
+            }
         }
     }
 
     println!(
-        "Decrypted first block: {}",
-        String::from_utf8_lossy(&test_block)
+        "{}",
+        String::from_utf8_lossy(&test_vector[block_size..=block_size + byte_count])
     );
 }
