@@ -314,14 +314,83 @@ fn find_marker(input: &[u8], marker: &[u8]) -> Option<usize> {
     None
 }
 
-fn main() {
-    assert_eq!(
-        pkcs7::unpad(b"ICE ICE BABY\x04\x04\x04\x04"),
-        b"ICE ICE BABY"
-    );
+struct QuoteOutIter<'a> {
+    input: std::slice::Iter<'a, u8>,
+    escaped: Option<u8>,
+}
 
-    assert_eq!(
-        pkcs7::unpad(b"ICE ICE BABY\x05\x05\x05\x05"),
-        b"ICE ICE BABY\x05\x05\x05\x05"
-    );
+impl<'a> QuoteOutIter<'a> {
+    fn new(input: &'a [u8]) -> Self {
+        Self {
+            input: input.iter(),
+            escaped: None,
+        }
+    }
+}
+
+impl<'a> Iterator for QuoteOutIter<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(byte) = self.escaped {
+            self.escaped = None;
+            return Some(byte);
+        }
+
+        let next = self.input.next();
+
+        match next {
+            Some(b';') | Some(b'=') => {
+                self.escaped = next.copied();
+                Some(b'\\')
+            }
+
+            Some(&byte) => Some(byte),
+
+            None => None,
+        }
+    }
+}
+
+fn submit_userdata(input: &[u8], key: &AesKey, iv: &[u8]) -> Vec<u8> {
+    let cleartext: Vec<u8> = b"comment1=cooking%20MCs;userdata="
+        .into_iter()
+        .copied()
+        .chain(QuoteOutIter::new(input).into_iter())
+        .chain(
+            b";comment2=%20like%20a%20pound%20of%20bacon"
+                .into_iter()
+                .copied(),
+        )
+        .collect();
+
+    aes::aes_cbc_encrypt(&cleartext, key, iv).unwrap()
+}
+
+fn is_admin(input: &[u8], key: &AesKey, iv: &[u8]) -> bool {
+    let decrypted = aes::aes_cbc_decrypt(input, key, iv).unwrap();
+
+    println!("{}", String::from_utf8_lossy(&decrypted));
+
+    decrypted
+        .windows(12)
+        .filter_map(|w| (w == b";admin=true;").then_some(true))
+        .next()
+        .is_some()
+}
+
+fn main() {
+    let key = AesKey::from(&urandom::bytes(16)).unwrap();
+    let iv = urandom::bytes(16);
+
+    let mut user_data = submit_userdata(b"YELLOW SUBMARINE;admin=true;", &key, &iv);
+
+    let admin = is_admin(&user_data, &key, &iv);
+
+    let length = user_data.len();
+    user_data[length - 1 - 16] ^= 0x01;
+
+    let is_admin = is_admin(&user_data, &key, &iv);
+
+    println!("Admin? {}", is_admin);
 }
