@@ -370,8 +370,6 @@ fn submit_userdata(input: &[u8], key: &AesKey, iv: &[u8]) -> Vec<u8> {
 fn is_admin(input: &[u8], key: &AesKey, iv: &[u8]) -> bool {
     let decrypted = aes::aes_cbc_decrypt(input, key, iv).unwrap();
 
-    println!("{}", String::from_utf8_lossy(&decrypted));
-
     decrypted
         .windows(12)
         .filter_map(|w| (w == b";admin=true;").then_some(true))
@@ -383,14 +381,13 @@ fn main() {
     let key = AesKey::from(&urandom::bytes(16)).unwrap();
     let iv = urandom::bytes(16);
 
-    let mut user_data = submit_userdata(b"YELLOW SUBMARINE;admin=true;", &key, &iv);
+    let mut user_data = submit_userdata(b";admin-true", &key, &iv);
 
     let admin = is_admin(&user_data, &key, &iv);
+    println!("Admin before? {}", admin);
 
-    let length = user_data.len();
-    user_data[length - 1 - 16] ^= 0x01;
+    user_data[23] ^= 0x10;
 
-    let is_admin = is_admin(&user_data, &key, &iv);
-
-    println!("Admin? {}", is_admin);
+    let admin = is_admin(&user_data, &key, &iv);
+    println!("Admin after? {}", admin);
 }
