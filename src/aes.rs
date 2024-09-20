@@ -54,6 +54,11 @@ pub fn aes_cbc_decrypt<I: AsRef<[u8]>, V: AsRef<[u8]>>(
     }
 
     let cleartext_end = pkcs7::unpad_length(&cleartext);
+
+    if cleartext_end == cleartext.len() {
+        return Err(AesError::PaddingError);
+    }
+
     cleartext.truncate(cleartext_end);
 
     Ok(cleartext)
@@ -138,6 +143,7 @@ pub enum AesError {
     NonstandardKeyLength,
     IrregularDecryptLength,
     WrongSizeIv,
+    PaddingError,
 }
 
 pub enum AesKey {

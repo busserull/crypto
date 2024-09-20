@@ -377,17 +377,45 @@ fn is_admin(input: &[u8], key: &AesKey, iv: &[u8]) -> bool {
         .is_some()
 }
 
+struct CbcPaddingOracle {
+    key: AesKey,
+    iv: Vec<u8>,
+    cleartext: Buffer,
+}
+
+impl CbcPaddingOracle {
+    fn create(string: usize) -> (Self, Vec<u8>) {
+        let strings = [
+            "MDAwMDAwTm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmc=",
+            "MDAwMDAxV2l0aCB0aGUgYmFzcyBraWNrZWQgaW4gYW5kIHRoZSBWZWdhJ3MgYXJlIHB1bXBpbic=",
+            "MDAwMDAyUXVpY2sgdG8gdGhlIHBvaW50LCB0byB0aGUgcG9pbnQsIG5vIGZha2luZw==",
+            "MDAwMDAzQ29va2luZyBNQydzIGxpa2UgYSBwb3VuZCBvZiBiYWNvbg==",
+            "MDAwMDA0QnVybmluZyAnZW0sIGlmIHlvdSBhaW4ndCBxdWljayBhbmQgbmltYmxl",
+            "MDAwMDA1SSBnbyBjcmF6eSB3aGVuIEkgaGVhciBhIGN5bWJhbA==",
+            "MDAwMDA2QW5kIGEgaGlnaCBoYXQgd2l0aCBhIHNvdXBlZCB1cCB0ZW1wbw==",
+            "MDAwMDA3SSdtIG9uIGEgcm9sbCwgaXQncyB0aW1lIHRvIGdvIHNvbG8=",
+            "MDAwMDA4b2xsaW4nIGluIG15IGZpdmUgcG9pbnQgb2g=",
+            "MDAwMDA5aXRoIG15IHJhZy10b3AgZG93biBzbyBteSBoYWlyIGNhbiBibG93",
+        ];
+
+        let cleartext = Buffer::from_base64(strings[string]);
+
+        let key = AesKey::from(&urandom::bytes(16)).unwrap();
+
+        let iv = urandom::bytes(16);
+
+        let ciphertext = aes::aes_cbc_encrypt(cleartext.as_ref(), &key, &iv).unwrap();
+
+        (Self { key, iv, cleartext }, ciphertext)
+    }
+
+    fn correctly_padded(&self, ciphertext: &[u8]) -> bool {
+        aes::aes_cbc_decrypt(&ciphertext, &self.key, &self.iv).is_ok()
+    }
+}
+
 fn main() {
-    let key = AesKey::from(&urandom::bytes(16)).unwrap();
-    let iv = urandom::bytes(16);
+    let (oracle, ciphertext) = CbcPaddingOracle::create(0);
 
-    let mut user_data = submit_userdata(b";admin-true", &key, &iv);
-
-    let admin = is_admin(&user_data, &key, &iv);
-    println!("Admin before? {}", admin);
-
-    user_data[23] ^= 0x10;
-
-    let admin = is_admin(&user_data, &key, &iv);
-    println!("Admin after? {}", admin);
+    println!("Correctly padded: {}", oracle.correctly_padded(&ciphertext));
 }
