@@ -384,7 +384,7 @@ struct CbcPaddingOracle {
 }
 
 impl CbcPaddingOracle {
-    fn create(string: usize) -> (Self, Vec<u8>) {
+    fn new(string: usize) -> Self {
         let strings = [
             "MDAwMDAwTm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmc=",
             "MDAwMDAxV2l0aCB0aGUgYmFzcyBraWNrZWQgaW4gYW5kIHRoZSBWZWdhJ3MgYXJlIHB1bXBpbic=",
@@ -404,9 +404,15 @@ impl CbcPaddingOracle {
 
         let iv = urandom::bytes(16);
 
-        let ciphertext = aes::aes_cbc_encrypt(cleartext.as_ref(), &key, &iv).unwrap();
+        Self { key, iv, cleartext }
+    }
 
-        (Self { key, iv, cleartext }, ciphertext)
+    fn iv(&self) -> Vec<u8> {
+        self.iv.clone()
+    }
+
+    fn ciphertext(&self) -> Vec<u8> {
+        aes::aes_cbc_encrypt(self.cleartext.as_ref(), &self.key, &self.iv).unwrap()
     }
 
     fn correctly_padded(&self, ciphertext: &[u8]) -> bool {
@@ -424,33 +430,27 @@ fn shape_tail(cipher_block: &mut [u8], zero_iv: &[u8], tail: u8) {
     }
 }
 
-fn last_cleartext_byte(oracle: &CbcPaddingOracle, ws: &mut [u8; 32]) -> u8 {
-    let mut byte = 0x01;
+fn last_cleartext_byte(oracle: &CbcPaddingOracle, two_blocks: &[u8; 32]) -> u8 {
+    let mut ws: [u8; 32] = [0; 32];
+    ws.copy_from_slice(two_blocks);
 
-    loop {
-        let mut last_byte_one = false;
-
+    for byte in 1..u8::MAX {
         ws[15] ^= byte;
 
-        if oracle.correctly_padded(ws) {
-            println!("Found candidate: {}", byte);
+        if oracle.correctly_padded(&ws) {
             ws[14] ^= 0x01;
 
-            last_byte_one = !oracle.correctly_padded(ws);
+            if oracle.correctly_padded(&ws) {
+                return byte;
+            }
 
             ws[14] ^= 0x01;
         }
 
         ws[15] ^= byte;
-
-        if last_byte_one {
-            break;
-        }
-
-        byte = byte.wrapping_add(1);
     }
 
-    byte
+    unreachable!();
 }
 
 fn decrypt_last_block(oracle: &CbcPaddingOracle, two_blocks: &[u8]) -> Vec<u8> {
@@ -458,18 +458,14 @@ fn decrypt_last_block(oracle: &CbcPaddingOracle, two_blocks: &[u8]) -> Vec<u8> {
     ws.copy_from_slice(two_blocks.try_into().unwrap());
 
     let mut zero_iv = vec![0; 16];
-    zero_iv[15] = last_cleartext_byte(oracle, &mut ws);
-
-    println!("Last byte: {}", zero_iv[15]);
+    zero_iv[15] = last_cleartext_byte(oracle, &ws) ^ 0x01;
 
     for i in (0..15).rev() {
         let target_byte = 16 - i as u8;
-        println!("Target byte: {}", target_byte);
 
-        /* Zero */
         shape_tail(&mut ws[0..16], &zero_iv, target_byte);
 
-        let mut byte = 0x01;
+        let mut byte = 0;
 
         loop {
             ws[i] ^= byte;
@@ -485,98 +481,42 @@ fn decrypt_last_block(oracle: &CbcPaddingOracle, two_blocks: &[u8]) -> Vec<u8> {
             byte += 1;
         }
 
-        /* Unzero */
         shape_tail(&mut ws[0..16], &zero_iv, target_byte);
 
-        zero_iv[i] = byte;
+        zero_iv[i] = byte ^ target_byte;
     }
 
     Vec::from(zero_iv)
 }
 
 fn main() {
-    let (oracle, ciphertext) = CbcPaddingOracle::create(0);
+    for cleartext_index in 0..10 {
+        let oracle = CbcPaddingOracle::new(cleartext_index);
 
-    let res = decrypt_last_block(&oracle, &ciphertext[ciphertext.len() - 32..]);
-    println!("Res: {:?}", String::from_utf8_lossy(&res));
+        let (iv, ciphertext) = (oracle.iv(), oracle.ciphertext());
 
-    todo!();
+        let mut decrypted = Vec::new();
 
-    let mut deciphered = Vec::new();
+        let zero_block_prepadded: Vec<u8> = iv.into_iter().chain(ciphertext.into_iter()).collect();
 
-    let mut working_space: Vec<u8> = [0]
-        .repeat(16)
-        .into_iter()
-        .chain(ciphertext.into_iter())
-        .collect();
-
-    for block_start in (0..=working_space.len() - 32).rev().step_by(16) {
-        let mut decrypted_block = vec![0u8; 16];
-
-        for byte_number in (0..16).rev() {
-            println!("Byte number {}", byte_number);
-
-            if byte_number == 8 {
-                println!("So far: {:?}", String::from_utf8_lossy(&decrypted_block));
-            }
-
-            let target_byte = 16 - byte_number as u8;
-
-            let mut byte = 1u8;
-
-            shape_tail(
-                &mut working_space[block_start..block_start + 16],
-                &decrypted_block,
-                target_byte,
+        for block_pair_start in (0..=zero_block_prepadded.len() - 32).rev().step_by(16) {
+            let decrypted_block = decrypt_last_block(
+                &oracle,
+                &zero_block_prepadded[block_pair_start..block_pair_start + 32],
             );
 
-            loop {
-                let mut target_reached = false;
-
-                working_space[block_start + byte_number] ^= byte;
-
-                if oracle.correctly_padded(&working_space[block_start..block_start + 32]) {
-                    if byte_number == 16 {
-                        target_reached = true;
-                    } else {
-                        working_space[block_start + byte_number - 1] ^= 0x01;
-
-                        target_reached =
-                            oracle.correctly_padded(&working_space[block_start..block_start + 32]);
-
-                        working_space[block_start + byte_number - 1] ^= 0x01;
-                    }
-                }
-
-                working_space[block_start + byte_number] ^= byte;
-
-                if target_reached {
-                    break;
-                }
-
-                byte += 1;
-            }
-
-            let decrypted_byte = byte ^ target_byte;
-
-            shape_tail(
-                &mut working_space[block_start..block_start + 16],
-                &decrypted_block,
-                target_byte,
-            );
-
-            decrypted_block[byte_number] = decrypted_byte;
-            deciphered.push(decrypted_byte);
+            decrypted.extend(decrypted_block.iter().rev());
         }
 
+        decrypted.reverse();
+
+        let length_without_padding = pkcs7::unpad_length(&decrypted);
+        decrypted.truncate(length_without_padding);
+
         println!(
-            "Decrypted block: `{}`",
-            String::from_utf8_lossy(&decrypted_block)
+            "{}: {}",
+            cleartext_index,
+            String::from_utf8_lossy(&decrypted)
         );
     }
-
-    /* For the last byte, xor until padding is correct */
-    /* When padding is correct, flip second last byte to ensure that the last byte is actually 0x01 */
-
-    /* When the last byte is guaranteed to be 0x01, we know clear = x ^ 0x01 */
 }
