@@ -8,18 +8,18 @@ pub fn aes_ctr<I: AsRef<[u8]>>(input: I, key: &AesKey, nonce: u64) -> Vec<u8> {
     let mut gen_block = Block([0; 16]);
 
     for (i, block) in input.as_ref().chunks(16).enumerate() {
-        (&mut gen_block.0[8..]).copy_from_slice(&(i as u64).to_le_bytes());
         (&mut gen_block.0[..8]).copy_from_slice(&nonce.to_le_bytes());
+        (&mut gen_block.0[8..]).copy_from_slice(&(i as u64).to_le_bytes());
 
         gen_block = cipher(gen_block, &key_schedule);
 
         let mut xor_block = Block([0; 16]);
         let input_block_len = block.len();
-        (&mut xor_block.0[0..input_block_len]).copy_from_slice(block);
+        (&mut xor_block.0[..input_block_len]).copy_from_slice(block);
 
         xor_block.xor_inplace(&gen_block);
 
-        output.extend_from_slice(&xor_block.0);
+        output.extend_from_slice(&xor_block.0[..input_block_len]);
     }
 
     output
