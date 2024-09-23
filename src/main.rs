@@ -490,33 +490,13 @@ fn decrypt_last_block(oracle: &CbcPaddingOracle, two_blocks: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
-    for cleartext_index in 0..10 {
-        let oracle = CbcPaddingOracle::new(cleartext_index);
+    let ciphertext = Buffer::from_base64(
+        "L77na/nrFsKvynd6HzOoG7GHTLXsTVu9qvY/2syLXzhPweyyMTJULu/6/kXX0KSvoOLSFQ==",
+    );
 
-        let (iv, ciphertext) = (oracle.iv(), oracle.ciphertext());
+    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
 
-        let mut decrypted = Vec::new();
+    let cleartext = aes::aes_ctr(&ciphertext, &key, 0);
 
-        let zero_block_prepadded: Vec<u8> = iv.into_iter().chain(ciphertext.into_iter()).collect();
-
-        for block_pair_start in (0..=zero_block_prepadded.len() - 32).rev().step_by(16) {
-            let decrypted_block = decrypt_last_block(
-                &oracle,
-                &zero_block_prepadded[block_pair_start..block_pair_start + 32],
-            );
-
-            decrypted.extend(decrypted_block.iter().rev());
-        }
-
-        decrypted.reverse();
-
-        let length_without_padding = pkcs7::unpad_length(&decrypted);
-        decrypted.truncate(length_without_padding);
-
-        println!(
-            "{}: {}",
-            cleartext_index,
-            String::from_utf8_lossy(&decrypted)
-        );
-    }
+    println!("{}", String::from_utf8_lossy(&cleartext));
 }

@@ -1,5 +1,30 @@
 use super::pkcs7;
 
+pub fn aes_ctr<I: AsRef<[u8]>>(input: I, key: &AesKey, nonce: u64) -> Vec<u8> {
+    let mut output = Vec::new();
+
+    let key_schedule = key.schedule();
+
+    let mut gen_block = Block([0; 16]);
+
+    for (i, block) in input.as_ref().chunks(16).enumerate() {
+        (&mut gen_block.0[8..]).copy_from_slice(&(i as u64).to_le_bytes());
+        (&mut gen_block.0[..8]).copy_from_slice(&nonce.to_le_bytes());
+
+        gen_block = cipher(gen_block, &key_schedule);
+
+        let mut xor_block = Block([0; 16]);
+        let input_block_len = block.len();
+        (&mut xor_block.0[0..input_block_len]).copy_from_slice(block);
+
+        xor_block.xor_inplace(&gen_block);
+
+        output.extend_from_slice(&xor_block.0);
+    }
+
+    output
+}
+
 pub fn aes_cbc_encrypt<I: AsRef<[u8]>, V: AsRef<[u8]>>(
     input: I,
     key: &AesKey,
@@ -302,6 +327,12 @@ impl Block {
         }
 
         Self(block)
+    }
+
+    fn xor_inplace(&mut self, rhs: &Self) {
+        for (a, b) in self.0.iter_mut().zip(rhs.0.iter()) {
+            *a ^= b;
+        }
     }
 }
 
