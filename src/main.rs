@@ -7,7 +7,7 @@ mod key_value;
 mod pkcs7;
 mod urandom;
 
-use aes::AesKey;
+use aes::{aes_ctr, AesKey};
 use chunk_pair_iter::ChunkPairIter;
 
 use std::collections::HashMap;
@@ -40,6 +40,10 @@ impl Buffer {
 
     fn to_base64(&self) -> String {
         base64::bytes_to_base64(&self.0)
+    }
+
+    fn aes_ctr(&self, key: &AesKey, nonce: u64) -> Self {
+        Buffer(aes_ctr(&self.0, key, nonce))
     }
 
     fn xor(&self, rhs: &Self) -> Self {
@@ -234,14 +238,89 @@ fn single_xor_key_decipher(buffer: Buffer) -> (f64, u8, Buffer) {
     (lowest_penalty, best_key, deciphered)
 }
 
+struct EnglishPenalty([f64; 256]);
+
+impl EnglishPenalty {
+    fn new() -> Self {
+        Self([0.0; 256])
+    }
+
+    fn best(&self) -> u8 {
+        self.0
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .unwrap()
+            .0 as u8
+    }
+
+    fn print_matches(&self, count: usize) {
+        let mut matches: [(u8, f64); 256] = [(0, 0.0); 256];
+
+        for (i, &penalty) in self.0.iter().enumerate() {
+            matches[i] = (i as u8, penalty);
+        }
+
+        matches.sort_unstable_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+
+        for (byte, penalty) in matches.iter().take(count) {
+            println!("{:02x}: {:1.5}", byte, penalty);
+        }
+    }
+}
+
+impl std::ops::Index<usize> for EnglishPenalty {
+    type Output = f64;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl std::ops::IndexMut<usize> for EnglishPenalty {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+fn form_same_key_byte_penalty(texts: &[Buffer], index: usize) -> EnglishPenalty {
+    let mut penalty = EnglishPenalty::new();
+
+    for (bi, b) in (0..=u8::MAX).enumerate() {
+        let mut slots = vec![0u8; texts.len()];
+
+        for (i, text) in texts.iter().enumerate() {
+            slots[i] = text.0[index] ^ b;
+        }
+
+        penalty[bi] = Buffer(slots).printable_english_mismatch();
+    }
+
+    penalty
+}
+
 fn random_aes_128_key() -> AesKey {
     AesKey::from(&urandom::bytes(16)).unwrap()
 }
 
 fn main() {
-    let cleartexts = fs::read("19.txt").unwrap();
+    let key = random_aes_128_key();
 
-    for (i, line) in cleartexts.lines().enumerate() {
-        println!("{:>2} {}", i, line.unwrap());
+    let nonce = 0u64;
+
+    let ciphertexts: Vec<_> = fs::read("19.txt")
+        .unwrap()
+        .lines()
+        .map(|line_result| line_result.unwrap())
+        .map(|line| Buffer::from_base64(&line).aes_ctr(&key, nonce))
+        .collect();
+
+    for byte_index in 0..3 {
+        let penalty = form_same_key_byte_penalty(&ciphertexts, byte_index);
+
+        println!("\nByte index {}", byte_index);
+
+        penalty.print_matches(3);
+        println!("Best: {:02x}", penalty.best());
     }
 }
