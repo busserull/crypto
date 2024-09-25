@@ -340,14 +340,10 @@ fn main() {
         .map(|line| Buffer::from_base64(&line).aes_ctr(&key, nonce))
         .collect();
 
-    let shortest_length = ciphertexts.iter().map(|text| text.0.len()).min().unwrap();
-
-    for text in ciphertexts.iter_mut() {
-        text.0.truncate(shortest_length);
-    }
+    let longest_text_length = ciphertexts.iter().map(|text| text.0.len()).max().unwrap();
 
     let roughly_key = Buffer(
-        (0..shortest_length)
+        (0..longest_text_length)
             .into_iter()
             .map(|byte_index| form_same_key_byte_penalty(&ciphertexts, byte_index).best())
             .collect(),
