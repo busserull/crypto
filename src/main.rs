@@ -287,13 +287,38 @@ fn form_same_key_byte_penalty(texts: &[Buffer], index: usize) -> EnglishPenalty 
     let mut penalty = EnglishPenalty::new();
 
     for (bi, b) in (0..=u8::MAX).enumerate() {
-        let mut slots = vec![0u8; texts.len()];
+        let slots: Vec<u8> = texts
+            .iter()
+            .filter_map(|text| text.0.get(index).map(|tb| tb ^ b))
+            .collect();
 
-        for (i, text) in texts.iter().enumerate() {
-            slots[i] = text.0[index] ^ b;
+        for &l in slots.iter() {
+            if l < ' ' as u8 {
+                penalty[bi] += 1.0;
+            }
+
+            if l > 'z' as u8 {
+                penalty[bi] += 1.0;
+            }
+
+            if l >= '"' as u8 && l <= '+' as u8 {
+                penalty[bi] += 1.0;
+            }
+
+            if l >= '/' as u8 && l <= '>' as u8 {
+                penalty[bi] += 1.0;
+            }
+
+            if l >= '[' as u8 && l <= '`' as u8 {
+                penalty[bi] += 1.0;
+            }
+
+            if l == '@' as u8 {
+                penalty[bi] += 1.0;
+            }
         }
 
-        penalty[bi] = Buffer(slots).printable_english_mismatch();
+        penalty[bi] += Buffer(slots).printable_english_mismatch();
     }
 
     penalty
@@ -315,12 +340,17 @@ fn main() {
         .map(|line| Buffer::from_base64(&line).aes_ctr(&key, nonce))
         .collect();
 
-    for byte_index in 0..3 {
-        let penalty = form_same_key_byte_penalty(&ciphertexts, byte_index);
+    let longest_text_length = ciphertexts.iter().map(|text| text.0.len()).max().unwrap();
 
-        println!("\nByte index {}", byte_index);
+    let roughly_key = Buffer(
+        (0..longest_text_length)
+            .into_iter()
+            .map(|byte_index| form_same_key_byte_penalty(&ciphertexts, byte_index).best())
+            .collect(),
+    );
 
-        penalty.print_matches(3);
-        println!("Best: {:02x}", penalty.best());
+    for text in ciphertexts {
+        let clear = text.xor(&roughly_key);
+        println!("{}", String::from_utf8_lossy(&clear.0));
     }
 }
