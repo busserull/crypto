@@ -5,10 +5,12 @@ mod base64;
 mod chunk_pair_iter;
 mod key_value;
 mod pkcs7;
+mod random;
 mod urandom;
 
 use aes::{aes_ctr, AesKey};
 use chunk_pair_iter::ChunkPairIter;
+use random::MersenneTwister;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -329,28 +331,9 @@ fn random_aes_128_key() -> AesKey {
 }
 
 fn main() {
-    let key = random_aes_128_key();
+    let mut mt = MersenneTwister::new(123);
 
-    let nonce = 0u64;
-
-    let mut ciphertexts: Vec<_> = fs::read("20.txt")
-        .unwrap()
-        .lines()
-        .map(|line_result| line_result.unwrap())
-        .map(|line| Buffer::from_base64(&line).aes_ctr(&key, nonce))
-        .collect();
-
-    let longest_text_length = ciphertexts.iter().map(|text| text.0.len()).max().unwrap();
-
-    let roughly_key = Buffer(
-        (0..longest_text_length)
-            .into_iter()
-            .map(|byte_index| form_same_key_byte_penalty(&ciphertexts, byte_index).best())
-            .collect(),
-    );
-
-    for text in ciphertexts {
-        let clear = text.xor(&roughly_key);
-        println!("{}", String::from_utf8_lossy(&clear.0));
+    for _ in 0..20 {
+        println!("{}", mt.get());
     }
 }
