@@ -17,6 +17,7 @@ use std::fmt;
 use std::fs;
 use std::io::BufRead;
 use std::path::Path;
+use std::time::SystemTime;
 
 struct Buffer(Vec<u8>);
 
@@ -330,10 +331,32 @@ fn random_aes_128_key() -> AesKey {
     AesKey::from(&urandom::bytes(16)).unwrap()
 }
 
-fn main() {
-    let mut mt = MersenneTwister::new(123);
+fn unix_timestamp() -> u32 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as u32
+}
 
-    for _ in 0..20 {
-        println!("{}", mt.get());
-    }
+fn main() {
+    let now = unix_timestamp() + urandom::range(40, 1000);
+    let mut mt = MersenneTwister::new(now);
+
+    let first_rng = mt.get();
+
+    let later = now + urandom::range(100, 1300);
+
+    let mut seed = later;
+
+    let recovered_seed = loop {
+        let mut mt = MersenneTwister::new(seed);
+
+        if mt.get() == first_rng {
+            break seed;
+        }
+
+        seed -= 1;
+    };
+
+    println!("Found seed: {}", now == recovered_seed);
 }
