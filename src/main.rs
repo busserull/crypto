@@ -10,6 +10,7 @@ mod urandom;
 
 use aes::{aes_ctr, AesKey};
 use chunk_pair_iter::ChunkPairIter;
+use random::MersenneStream;
 use random::MersenneTwister;
 
 use std::collections::HashMap;
@@ -375,15 +376,19 @@ fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
 }
 
 fn main() {
-    let seed = urandom::range(0, u32::MAX);
+    let seed = urandom::range(0, u16::MAX as u32);
 
     let mut mt = MersenneTwister::new(seed);
+    let mut ms = MersenneStream::new(seed as u16).into_iter();
 
-    let mut clone = mt_clone(&mut mt);
+    for _ in 0..100 {
+        let x = mt.get();
 
-    for _ in 0..1_000_000 {
-        assert_eq!(mt.get(), clone.get());
+        let a = ms.next().unwrap();
+        let b = ms.next().unwrap();
+        let c = ms.next().unwrap();
+        let d = ms.next().unwrap();
+
+        println!("{:08x} : {:02x} {:02x} {:02x} {:02x}", x, a, b, c, d);
     }
-
-    println!("Good to go");
 }

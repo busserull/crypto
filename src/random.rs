@@ -53,3 +53,36 @@ impl MersenneTwister {
         y ^ y.wrapping_shr(18)
     }
 }
+
+pub struct MersenneStream {
+    twister: MersenneTwister,
+    bytes: [u8; 4],
+    index: usize,
+}
+
+impl MersenneStream {
+    pub fn new(seed: u16) -> Self {
+        Self {
+            twister: MersenneTwister::new(seed as u32),
+            bytes: [0; 4],
+            index: 4,
+        }
+    }
+}
+
+impl Iterator for MersenneStream {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index > 3 {
+            self.bytes
+                .copy_from_slice(&self.twister.get().to_be_bytes());
+            self.index = 0;
+        }
+
+        let byte = self.bytes[self.index];
+        self.index += 1;
+
+        Some(byte)
+    }
+}
