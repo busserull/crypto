@@ -348,106 +348,42 @@ fn temper(x: u32) -> u32 {
     x ^ x.wrapping_shr(18) //                   y = y ^ (y >> l)
 }
 
-fn bit(v: u32, i: i32) -> u32 {
-    if i < 0 || i > 31 {
-        0
-    } else {
-        v & (1 << i)
-    }
+fn untemper(z: u32) -> u32 {
+    let a = z ^ z.wrapping_shr(18);
+
+    let b = a ^ a.wrapping_shl(15).bitand(0xefc6_0000);
+
+    let c = b ^ b.wrapping_shl(7).bitand(0x0000_1680);
+    let d = c ^ c.wrapping_shl(7).bitand(0x000c_4000);
+    let e = d ^ d.wrapping_shl(7).bitand(0x0d20_0000);
+    let f = e ^ e.wrapping_shl(7).bitand(0x9000_0000);
+
+    let g = f ^ f.wrapping_shr(11).bitand(0xffc0_0000);
+    let h = g ^ g.wrapping_shr(11).bitand(0x003f_f800);
+
+    h ^ h.wrapping_shr(11).bitand(0x0000_07ff)
 }
 
-fn undo_left_shift_xor_and(z: u32, shl: i32, mask: u32) -> u32 {
-    let mut x = 0u32;
+fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
+    let mut tapped: [u32; 624] = [0; 624];
 
-    for i in 0..32 {
-        if (bit(z, 31 - i) ^ (bit(z, 31 - (i - shl)) & bit(mask, 31 - i))) > 0 {
-            x |= 1 << (31 - i);
-        }
+    for slot in tapped.iter_mut() {
+        *slot = untemper(mt.get());
     }
 
-    x
-}
-
-fn untemper(x: u32) -> u32 {
-    undo_left_shift_xor_and(x, 15, 0xefc6_0000)
-
-    /*
-    let mut x = x;
-    // Done
-    // x ^= x.wrapping_shr(18);
-
-    println!("z {:032b}", x);
-
-    let t = x ^ x.bitand(0x0000_7fff).wrapping_shl(15).bitand(0xefc6_0000);
-    println!("t {:032b}", t);
-    let s = t.bitand(0x3fff_8000).wrapping_shl(15).bitand(0xefc6_0000);
-    println!("s {:032b}", s);
-    x ^= s;
-
-    // x ^= x.wrapping_shl(15) & 0xefc6_0000;
-
-    // x ^= x.wrapping_shl(7) & 0x9d2c_5680;
-
-    // Done
-    // let t = x ^ x.wrapping_shr(11).bitand(0x001f_fc00);
-    // x ^ t.wrapping_shr(11)
-    x
-    */
+    MersenneTwister::from_state(&tapped)
 }
 
 fn main() {
-    let x = 3878751475u32;
-    println!("i {:032b}", x);
+    let seed = urandom::range(0, u32::MAX);
 
-    let mut y = x;
-    y ^= y.wrapping_shl(15) & 0xefc6_0000;
+    let mut mt = MersenneTwister::new(seed);
 
-    let z = untemper(y);
+    let mut clone = mt_clone(&mut mt);
 
-    println!("o {:032b}", z);
+    for _ in 0..1_000_000 {
+        assert_eq!(mt.get(), clone.get());
+    }
 
-    println!("{} = {}? {}", x, z, x == z);
-
-    /*
-    let state = 1122872025u32;
-    let out = 2991312382u32;
-
-    assert_eq!(temper(state), out);
-
-    println!("{}", state);
-    println!("{}", out);
-    println!("{}", untemper(out));
-    */
-
-    // let start = urandom::range(43556, 44899);
-
-    // for i in start..start + 20 {
-    //     let t = temper(i);
-    //     let unt = untemper(t);
-
-    //     println!("{} -> {} -> {}", i, t, unt);
-    // }
-
-    /*
-    let now = unix_timestamp() + urandom::range(40, 1000);
-    let mut mt = MersenneTwister::new(now);
-
-    let first_rng = mt.get();
-
-    let later = now + urandom::range(100, 1300);
-
-    let mut seed = later;
-
-    let recovered_seed = loop {
-        let mut mt = MersenneTwister::new(seed);
-
-        if mt.get() == first_rng {
-            break seed;
-        }
-
-        seed -= 1;
-    };
-
-    println!("Found seed: {}", now == recovered_seed);
-    */
+    println!("Good to go");
 }

@@ -22,6 +22,13 @@ impl MersenneTwister {
         Self { index: 0, state }
     }
 
+    pub fn from_state(state: &[u32; 624]) -> Self {
+        Self {
+            index: 0,
+            state: state.clone(),
+        }
+    }
+
     pub fn get(&mut self) -> u32 {
         let x = (self.state[self.index] & 0x8000_0000)
             | (self.state[(self.index + 1) % 624] & 0x7fff_ffff);
