@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::io::BufRead;
+use std::ops::BitAnd;
+use std::ops::Shl;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -338,7 +340,95 @@ fn unix_timestamp() -> u32 {
         .as_secs() as u32
 }
 
+fn temper(x: u32) -> u32 {
+    let mut x = x;
+    x ^= x.wrapping_shr(11); //                 y = y ^ (y >> u)
+    x ^= x.wrapping_shl(7) & 0x9d2c_5680; //    y = y ^ ((y << s) & b)
+    x ^= x.wrapping_shl(15) & 0xefc6_0000; //   y = y ^ ((y << t) & c)
+    x ^ x.wrapping_shr(18) //                   y = y ^ (y >> l)
+}
+
+fn bit(v: u32, i: i32) -> u32 {
+    if i < 0 || i > 31 {
+        0
+    } else {
+        v & (1 << i)
+    }
+}
+
+fn undo_left_shift_xor_and(z: u32, shl: i32, mask: u32) -> u32 {
+    let mut x = 0u32;
+
+    for i in 0..32 {
+        if (bit(z, 31 - i) ^ (bit(z, 31 - (i - shl)) & bit(mask, 31 - i))) > 0 {
+            x |= 1 << (31 - i);
+        }
+    }
+
+    x
+}
+
+fn untemper(x: u32) -> u32 {
+    undo_left_shift_xor_and(x, 15, 0xefc6_0000)
+
+    /*
+    let mut x = x;
+    // Done
+    // x ^= x.wrapping_shr(18);
+
+    println!("z {:032b}", x);
+
+    let t = x ^ x.bitand(0x0000_7fff).wrapping_shl(15).bitand(0xefc6_0000);
+    println!("t {:032b}", t);
+    let s = t.bitand(0x3fff_8000).wrapping_shl(15).bitand(0xefc6_0000);
+    println!("s {:032b}", s);
+    x ^= s;
+
+    // x ^= x.wrapping_shl(15) & 0xefc6_0000;
+
+    // x ^= x.wrapping_shl(7) & 0x9d2c_5680;
+
+    // Done
+    // let t = x ^ x.wrapping_shr(11).bitand(0x001f_fc00);
+    // x ^ t.wrapping_shr(11)
+    x
+    */
+}
+
 fn main() {
+    let x = 3878751475u32;
+    println!("i {:032b}", x);
+
+    let mut y = x;
+    y ^= y.wrapping_shl(15) & 0xefc6_0000;
+
+    let z = untemper(y);
+
+    println!("o {:032b}", z);
+
+    println!("{} = {}? {}", x, z, x == z);
+
+    /*
+    let state = 1122872025u32;
+    let out = 2991312382u32;
+
+    assert_eq!(temper(state), out);
+
+    println!("{}", state);
+    println!("{}", out);
+    println!("{}", untemper(out));
+    */
+
+    // let start = urandom::range(43556, 44899);
+
+    // for i in start..start + 20 {
+    //     let t = temper(i);
+    //     let unt = untemper(t);
+
+    //     println!("{} -> {} -> {}", i, t, unt);
+    // }
+
+    /*
     let now = unix_timestamp() + urandom::range(40, 1000);
     let mut mt = MersenneTwister::new(now);
 
@@ -359,4 +449,5 @@ fn main() {
     };
 
     println!("Found seed: {}", now == recovered_seed);
+    */
 }
