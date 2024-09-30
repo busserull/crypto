@@ -375,20 +375,35 @@ fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
     MersenneTwister::from_state(&tapped)
 }
 
+fn mersenne_encrypt_decrypt(input: &[u8], key: u16) -> Vec<u8> {
+    input
+        .iter()
+        .zip(MersenneStream::new(key).into_iter())
+        .map(|(a, b)| a ^ b)
+        .collect()
+}
+
 fn main() {
-    let seed = urandom::range(0, u16::MAX as u32);
+    let seed = urandom::range(0, u16::MAX as u32) as u16;
 
-    let mut mt = MersenneTwister::new(seed);
-    let mut ms = MersenneStream::new(seed as u16).into_iter();
+    let marker = Vec::from(b"AAAAAAAAAAAAAA");
 
-    for _ in 0..100 {
-        let x = mt.get();
+    let mut input = urandom::bytes(urandom::range(12, 36) as usize);
+    input.extend_from_slice(&marker);
 
-        let a = ms.next().unwrap();
-        let b = ms.next().unwrap();
-        let c = ms.next().unwrap();
-        let d = ms.next().unwrap();
+    let cipher = mersenne_encrypt_decrypt(&input, seed);
 
-        println!("{:08x} : {:02x} {:02x} {:02x} {:02x}", x, a, b, c, d);
+    let mut recovered: Option<u16> = None;
+
+    for s in 0..=u16::MAX {
+        let clear = mersenne_encrypt_decrypt(&cipher, s);
+
+        if &clear[clear.len() - marker.len()..] == &marker {
+            recovered = Some(s);
+            break;
+        }
     }
+
+    println!("Seed: {}", seed);
+    println!("Recovered seed: {:?}", recovered);
 }
