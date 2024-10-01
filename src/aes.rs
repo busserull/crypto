@@ -1,5 +1,51 @@
 use super::pkcs7;
 
+pub struct AesCtrIter {
+    key_schedule: Vec<u32>,
+    block: Block,
+    nonce: u64,
+    counter: u64,
+    index: usize,
+}
+
+impl AesCtrIter {
+    pub fn new(key: &AesKey, nonce: u64) -> Self {
+        Self {
+            key_schedule: key.schedule(),
+            block: Block([0; 16]),
+            nonce,
+            counter: 0,
+            index: 16,
+        }
+    }
+
+    fn make_block(&mut self) {
+        let mut block = Block([0; 16]);
+
+        (&mut block.0[..8]).copy_from_slice(&self.nonce.to_le_bytes());
+        (&mut block.0[8..]).copy_from_slice(&self.counter.to_le_bytes());
+
+        self.block = cipher(block, &self.key_schedule);
+        self.counter += 1;
+        self.index = 0;
+    }
+}
+
+impl Iterator for AesCtrIter {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index > 15 {
+            self.make_block();
+        }
+
+        let byte = self.block.0[self.index];
+        self.index += 1;
+
+        Some(byte)
+    }
+}
+
 pub fn aes_ctr<I: AsRef<[u8]>>(input: I, key: &AesKey, nonce: u64) -> Vec<u8> {
     let mut output = Vec::new();
 

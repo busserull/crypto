@@ -8,7 +8,7 @@ mod pkcs7;
 mod random;
 mod urandom;
 
-use aes::{aes_ctr, AesKey};
+use aes::{aes_ctr, AesCtrIter, AesKey};
 use chunk_pair_iter::ChunkPairIter;
 use random::MersenneStream;
 use random::MersenneTwister;
@@ -334,115 +334,40 @@ fn random_aes_128_key() -> AesKey {
     AesKey::from(&urandom::bytes(16)).unwrap()
 }
 
-fn unix_timestamp() -> u32 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as u32
-}
-
-fn temper(x: u32) -> u32 {
-    let mut x = x;
-    x ^= x.wrapping_shr(11); //                 y = y ^ (y >> u)
-    x ^= x.wrapping_shl(7) & 0x9d2c_5680; //    y = y ^ ((y << s) & b)
-    x ^= x.wrapping_shl(15) & 0xefc6_0000; //   y = y ^ ((y << t) & c)
-    x ^ x.wrapping_shr(18) //                   y = y ^ (y >> l)
-}
-
-fn untemper(z: u32) -> u32 {
-    let a = z ^ z.wrapping_shr(18);
-
-    let b = a ^ a.wrapping_shl(15).bitand(0xefc6_0000);
-
-    let c = b ^ b.wrapping_shl(7).bitand(0x0000_1680);
-    let d = c ^ c.wrapping_shl(7).bitand(0x000c_4000);
-    let e = d ^ d.wrapping_shl(7).bitand(0x0d20_0000);
-    let f = e ^ e.wrapping_shl(7).bitand(0x9000_0000);
-
-    let g = f ^ f.wrapping_shr(11).bitand(0xffc0_0000);
-    let h = g ^ g.wrapping_shr(11).bitand(0x003f_f800);
-
-    h ^ h.wrapping_shr(11).bitand(0x0000_07ff)
-}
-
-fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
-    let mut tapped: [u32; 624] = [0; 624];
-
-    for slot in tapped.iter_mut() {
-        *slot = untemper(mt.get());
+fn ctr_edit(ciphertext: &mut [u8], key: &AesKey, nonce: u64, offset: usize, newtext: &[u8]) {
+    for ((slot, key), byte) in ciphertext
+        .iter_mut()
+        .skip(offset)
+        .zip(AesCtrIter::new(key, nonce).into_iter().skip(offset))
+        .zip(newtext.iter())
+    {
+        *slot = key ^ byte;
     }
-
-    MersenneTwister::from_state(&tapped)
 }
 
-fn mersenne_encrypt_decrypt(input: &[u8], key: u16) -> Vec<u8> {
-    input
-        .iter()
-        .zip(MersenneStream::new_u16(key).into_iter())
-        .map(|(a, b)| a ^ b)
-        .collect()
-}
+fn exploit_edit_to_recover_key(ciphertext: &[u8], key: &AesKey, nonce: u64) -> Vec<u8> {
+    let mut recovered = Vec::from(ciphertext);
+    let zeros = [0u8].repeat(ciphertext.len());
 
-fn generate_password_reset_token(timestamp: u32) -> Vec<u8> {
-    MersenneStream::new_u32(timestamp)
-        .into_iter()
-        .take(16)
-        .collect()
-}
+    ctr_edit(&mut recovered, key, nonce, 0, &zeros);
 
-fn reset_token_formed_by_timestamp(token: &[u8]) -> bool {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap();
-
-    let week = Duration::from_secs(60 * 60 * 24 * 7);
-
-    let back = now - week;
-    let front = now + week;
-
-    for timestamp in back.as_secs()..front.as_secs() {
-        let generated = generate_password_reset_token(timestamp as u32);
-
-        if generated == token {
-            return true;
-        }
-    }
-
-    false
+    recovered
 }
 
 fn main() {
-    let seed = urandom::range(0, u16::MAX as u32) as u16;
+    let nonce = ((urandom::range(0, u32::MAX) as u64) << 32) | (urandom::range(0, u32::MAX) as u64);
+    let key = random_aes_128_key();
 
-    let marker = Vec::from(b"AAAAAAAAAAAAAA");
+    let cleartext = Buffer::from_file_base64("25.txt");
+    let ciphertext = aes_ctr(cleartext.as_ref(), &key, nonce);
 
-    let mut input = urandom::bytes(urandom::range(12, 36) as usize);
-    input.extend_from_slice(&marker);
+    let recovered = exploit_edit_to_recover_key(&ciphertext, &key, nonce);
 
-    let cipher = mersenne_encrypt_decrypt(&input, seed);
+    let decrypted: Vec<u8> = ciphertext
+        .iter()
+        .zip(recovered.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
 
-    let mut recovered: Option<u16> = None;
-
-    for s in 0..=u16::MAX {
-        let clear = mersenne_encrypt_decrypt(&cipher, s);
-
-        if &clear[clear.len() - marker.len()..] == &marker {
-            recovered = Some(s);
-            break;
-        }
-    }
-
-    println!("Seed: {}", seed);
-    println!("Recovered seed: {:?}", recovered);
-
-    let now = unix_timestamp();
-
-    let reset_token = generate_password_reset_token(now);
-
-    println!("Token: {:02x?}", reset_token);
-
-    println!(
-        "Generated from timestamp: {}",
-        reset_token_formed_by_timestamp(&reset_token)
-    );
+    println!("Decrypted: {}", decrypted == cleartext.as_ref());
 }
