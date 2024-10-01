@@ -388,22 +388,78 @@ impl InsecureApplication {
     }
 }
 
-fn main() {
-    let app = InsecureApplication::new();
+enum DecryptError {
+    HighAsciiError(Vec<u8>),
+    GenericError,
+}
 
-    let mut user = app.create_user("alice'admin<true");
+fn cbc_encrypt_key_as_iv(input: &[u8], key: &[u8]) -> Vec<u8> {
+    let iv = key;
+    let key = AesKey::from(key).unwrap();
 
-    for i in 0..user.len() - 6 {
-        user[i] ^= 0x01;
-        user[i + 6] ^= 0x01;
+    aes::aes_cbc_encrypt(input, &key, iv).unwrap()
+}
 
-        if app.is_admin(&user) {
-            break;
+fn cbc_decrypt_key_as_iv(input: &[u8], key: &[u8]) -> Result<(), DecryptError> {
+    let iv = key;
+    let key = AesKey::from(key).unwrap();
+
+    let decrypt = match aes::aes_cbc_decrypt(input, &key, iv) {
+        Ok(result) => result,
+        Err(_) => return Err(DecryptError::GenericError),
+    };
+
+    for byte in decrypt.iter() {
+        if *byte > 127 {
+            return Err(DecryptError::HighAsciiError(decrypt));
         }
-
-        user[i] ^= 0x01;
-        user[i + 6] ^= 0x01;
     }
 
-    println!("Security broken: {}", app.is_admin(&user));
+    Ok(())
+}
+
+fn create_malicious_payload(ciphertext: &[u8]) -> Vec<u8> {
+    ciphertext
+        .iter()
+        .take(16)
+        .copied()
+        .chain([0].repeat(16))
+        .chain(ciphertext.iter().copied())
+        .collect()
+}
+
+fn main() {
+    let key = urandom::bytes(16);
+
+    let mut comment_id = 0;
+
+    let text = loop {
+        let url = format!(
+            "comment{}=cocking%20MCs;userdata=superfortress&comment{}=bacon",
+            comment_id,
+            comment_id + 1,
+        );
+
+        comment_id += 1;
+
+        let ciphertext = cbc_encrypt_key_as_iv(&url.bytes().collect::<Vec<u8>>(), &key);
+
+        let attack = create_malicious_payload(&ciphertext);
+
+        if let Err(DecryptError::HighAsciiError(text)) = cbc_decrypt_key_as_iv(&attack, &key) {
+            break text;
+        }
+    };
+
+    let recovered: Vec<u8> = text
+        .iter()
+        .take(16)
+        .zip(text.iter().skip(32))
+        .map(|(a, b)| a ^ b)
+        .collect();
+
+    println!("{:02x?}", key);
+    println!("{:02x?}", recovered);
+
+    println!("Found key: {}", key == recovered);
 }
