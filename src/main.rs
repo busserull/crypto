@@ -354,20 +354,56 @@ fn exploit_edit_to_recover_key(ciphertext: &[u8], key: &AesKey, nonce: u64) -> V
     recovered
 }
 
+struct InsecureApplication {
+    key: AesKey,
+    nonce: u64,
+}
+
+impl InsecureApplication {
+    fn new() -> Self {
+        Self {
+            key: random_aes_128_key(),
+            nonce: urandom::range(0, u32::MAX) as u64,
+        }
+    }
+
+    fn create_user(&self, name: &str) -> Vec<u8> {
+        let name = name.replace('=', "\\=").replace('&', "\\&");
+        let id = urandom::range(5, 987968971);
+
+        aes_ctr(
+            format!("id={}&name={}&type=user", id, name)
+                .bytes()
+                .collect::<Vec<u8>>(),
+            &self.key,
+            self.nonce,
+        )
+    }
+
+    fn is_admin(&self, input: &[u8]) -> bool {
+        let decrypted = aes_ctr(input, &self.key, self.nonce);
+        let decoded = String::from_utf8_lossy(&decrypted);
+
+        decoded.contains("&admin=true")
+    }
+}
+
 fn main() {
-    let nonce = ((urandom::range(0, u32::MAX) as u64) << 32) | (urandom::range(0, u32::MAX) as u64);
-    let key = random_aes_128_key();
+    let app = InsecureApplication::new();
 
-    let cleartext = Buffer::from_file_base64("25.txt");
-    let ciphertext = aes_ctr(cleartext.as_ref(), &key, nonce);
+    let mut user = app.create_user("alice'admin<true");
 
-    let recovered = exploit_edit_to_recover_key(&ciphertext, &key, nonce);
+    for i in 0..user.len() - 6 {
+        user[i] ^= 0x01;
+        user[i + 6] ^= 0x01;
 
-    let decrypted: Vec<u8> = ciphertext
-        .iter()
-        .zip(recovered.iter())
-        .map(|(a, b)| a ^ b)
-        .collect();
+        if app.is_admin(&user) {
+            break;
+        }
 
-    println!("Decrypted: {}", decrypted == cleartext.as_ref());
+        user[i] ^= 0x01;
+        user[i + 6] ^= 0x01;
+    }
+
+    println!("Security broken: {}", app.is_admin(&user));
 }
