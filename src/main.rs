@@ -20,7 +20,7 @@ use std::io::BufRead;
 use std::ops::BitAnd;
 use std::ops::Shl;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 struct Buffer(Vec<u8>);
 
@@ -378,9 +378,37 @@ fn mt_clone(mt: &mut MersenneTwister) -> MersenneTwister {
 fn mersenne_encrypt_decrypt(input: &[u8], key: u16) -> Vec<u8> {
     input
         .iter()
-        .zip(MersenneStream::new(key).into_iter())
+        .zip(MersenneStream::new_u16(key).into_iter())
         .map(|(a, b)| a ^ b)
         .collect()
+}
+
+fn generate_password_reset_token(timestamp: u32) -> Vec<u8> {
+    MersenneStream::new_u32(timestamp)
+        .into_iter()
+        .take(16)
+        .collect()
+}
+
+fn reset_token_formed_by_timestamp(token: &[u8]) -> bool {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+
+    let week = Duration::from_secs(60 * 60 * 24 * 7);
+
+    let back = now - week;
+    let front = now + week;
+
+    for timestamp in back.as_secs()..front.as_secs() {
+        let generated = generate_password_reset_token(timestamp as u32);
+
+        if generated == token {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn main() {
@@ -406,4 +434,15 @@ fn main() {
 
     println!("Seed: {}", seed);
     println!("Recovered seed: {:?}", recovered);
+
+    let now = unix_timestamp();
+
+    let reset_token = generate_password_reset_token(now);
+
+    println!("Token: {:02x?}", reset_token);
+
+    println!(
+        "Generated from timestamp: {}",
+        reset_token_formed_by_timestamp(&reset_token)
+    );
 }

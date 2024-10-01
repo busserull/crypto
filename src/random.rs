@@ -61,9 +61,17 @@ pub struct MersenneStream {
 }
 
 impl MersenneStream {
-    pub fn new(seed: u16) -> Self {
+    pub fn new_u16(seed: u16) -> Self {
         Self {
             twister: MersenneTwister::new(seed as u32),
+            bytes: [0; 4],
+            index: 4,
+        }
+    }
+
+    pub fn new_u32(seed: u32) -> Self {
+        Self {
+            twister: MersenneTwister::new(seed),
             bytes: [0; 4],
             index: 4,
         }
