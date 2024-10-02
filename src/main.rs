@@ -6,12 +6,14 @@ mod chunk_pair_iter;
 mod key_value;
 mod pkcs7;
 mod random;
+mod sha;
 mod urandom;
 
 use aes::{aes_ctr, AesCtrIter, AesKey};
 use chunk_pair_iter::ChunkPairIter;
 use random::MersenneStream;
 use random::MersenneTwister;
+use sha::sha1_digest;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -429,37 +431,6 @@ fn create_malicious_payload(ciphertext: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
-    let key = urandom::bytes(16);
-
-    let mut comment_id = 0;
-
-    let text = loop {
-        let url = format!(
-            "comment{}=cocking%20MCs;userdata=superfortress&comment{}=bacon",
-            comment_id,
-            comment_id + 1,
-        );
-
-        comment_id += 1;
-
-        let ciphertext = cbc_encrypt_key_as_iv(&url.bytes().collect::<Vec<u8>>(), &key);
-
-        let attack = create_malicious_payload(&ciphertext);
-
-        if let Err(DecryptError::HighAsciiError(text)) = cbc_decrypt_key_as_iv(&attack, &key) {
-            break text;
-        }
-    };
-
-    let recovered: Vec<u8> = text
-        .iter()
-        .take(16)
-        .zip(text.iter().skip(32))
-        .map(|(a, b)| a ^ b)
-        .collect();
-
-    println!("{:02x?}", key);
-    println!("{:02x?}", recovered);
-
-    println!("Found key: {}", key == recovered);
+    let input = b"hash this";
+    println!("{}", hex::encode(sha1_digest(input)));
 }
