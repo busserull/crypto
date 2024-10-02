@@ -1,7 +1,24 @@
 use std::slice::ChunksExact;
 
 pub fn sha1_digest(input: &[u8]) -> [u8; 20] {
+    do_sha1_digest(input, None)
+}
+
+pub fn sha1_digest_from_state(input: &[u8], initial_state: &[u8; 20]) -> [u8; 20] {
+    do_sha1_digest(input, Some(initial_state))
+}
+
+fn do_sha1_digest(input: &[u8], state: Option<&[u8; 20]>) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+
+    if let Some(state) = state {
+        for (slot, bytes) in h.iter_mut().zip(state.chunks_exact(4)) {
+            let mut word = [0; 4];
+            word.copy_from_slice(bytes);
+
+            *slot = u32::from_be_bytes(word);
+        }
+    }
 
     for block in Sha1Blocks::new(input) {
         let w = sha1_schedule(&block);
@@ -125,7 +142,7 @@ impl<'a> Iterator for Sha1Blocks<'a> {
         let length_upper = u32::from_be_bytes((&length_bytes[0..4]).try_into().unwrap());
         let length_lower = u32::from_be_bytes((&length_bytes[4..8]).try_into().unwrap());
 
-        if tail_bytes > 56 {
+        if tail_bytes > 55 {
             let mut tail_block = [0; 16];
 
             tail_block[14] = length_upper;

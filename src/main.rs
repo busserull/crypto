@@ -13,7 +13,7 @@ use aes::{aes_ctr, AesCtrIter, AesKey};
 use chunk_pair_iter::ChunkPairIter;
 use random::MersenneStream;
 use random::MersenneTwister;
-use sha::sha1_digest;
+use sha::{sha1_digest, sha1_digest_from_state};
 
 use std::collections::HashMap;
 use std::fmt;
@@ -446,12 +446,51 @@ fn message_valid(key: &AesKey, message: &[u8], mac: &[u8]) -> bool {
     new_mac == mac
 }
 
+fn make_sha1_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
+    let length = key_byte_length + message.len();
+    let remainder = length % 64;
+
+    let padding_length = if remainder > 55 {
+        128 - remainder
+    } else {
+        64 - remainder
+    };
+
+    let bit_length = u64::to_be_bytes((length * 8) as u64);
+
+    [0x80]
+        .iter()
+        .copied()
+        .chain([0].iter().copied().cycle())
+        .take(padding_length - 8)
+        .chain(bit_length)
+        .collect()
+}
+
 fn main() {
     let key = random_aes_128_key();
-    let message = b"115";
 
+    let message = b"115";
     let mac = sha1_mac(&key, message);
 
-    println!("Message is `116`: {}", message_valid(&key, b"116", &mac));
-    println!("Message is `115`: {}", message_valid(&key, b"115", &mac));
+    let faked: Vec<u8> = message
+        .iter()
+        .copied()
+        .chain(make_sha1_glue_padding(16, message))
+        .chain(b"116".iter().copied())
+        .collect();
+
+    let faked_mac = sha1_digest_from_state(&faked, &mac);
+
+    println!(
+        "Message is `{}`: {}",
+        String::from_utf8_lossy(message),
+        message_valid(&key, message, &mac)
+    );
+
+    println!(
+        "Message is `{}`: {}",
+        String::from_utf8_lossy(&faked),
+        message_valid(&key, &faked, &faked_mac)
+    );
 }
