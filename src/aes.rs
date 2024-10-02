@@ -262,6 +262,18 @@ impl AesKey {
     }
 }
 
+impl AsRef<[u8]> for AesKey {
+    fn as_ref(&self) -> &[u8] {
+        use AesKey::*;
+
+        match self {
+            Aes128(bytes) => bytes,
+            Aes192(bytes) => bytes,
+            Aes256(bytes) => bytes,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Block([u8; 16]);
 

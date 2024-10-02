@@ -430,7 +430,28 @@ fn create_malicious_payload(ciphertext: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+fn sha1_mac(key: &AesKey, input: &[u8]) -> [u8; 20] {
+    let input: Vec<u8> = key
+        .as_ref()
+        .iter()
+        .copied()
+        .chain(input.iter().copied())
+        .collect();
+
+    sha1_digest(&input)
+}
+
+fn message_valid(key: &AesKey, message: &[u8], mac: &[u8]) -> bool {
+    let new_mac = sha1_mac(key, message);
+    new_mac == mac
+}
+
 fn main() {
-    let input = b"hash this";
-    println!("{}", hex::encode(sha1_digest(input)));
+    let key = random_aes_128_key();
+    let message = b"115";
+
+    let mac = sha1_mac(&key, message);
+
+    println!("Message is `116`: {}", message_valid(&key, b"116", &mac));
+    println!("Message is `115`: {}", message_valid(&key, b"115", &mac));
 }
