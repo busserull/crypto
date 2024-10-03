@@ -1,14 +1,14 @@
 use std::slice::ChunksExact;
 
 pub fn sha1_digest(input: &[u8]) -> [u8; 20] {
-    do_sha1_digest(input, None)
+    do_sha1_digest(input, None, 0)
 }
 
-pub fn sha1_digest_from_state(input: &[u8], initial_state: &[u8; 20]) -> [u8; 20] {
-    do_sha1_digest(input, Some(initial_state))
+pub fn sha1_digest_from_state(input: &[u8], state: &[u8; 20], head_bytes: usize) -> [u8; 20] {
+    do_sha1_digest(input, Some(state), head_bytes)
 }
 
-fn do_sha1_digest(input: &[u8], state: Option<&[u8; 20]>) -> [u8; 20] {
+fn do_sha1_digest(input: &[u8], state: Option<&[u8; 20]>, extra_byte_length: usize) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
 
     if let Some(state) = state {
@@ -20,7 +20,7 @@ fn do_sha1_digest(input: &[u8], state: Option<&[u8; 20]>) -> [u8; 20] {
         }
     }
 
-    for block in Sha1Blocks::new(input) {
+    for block in Sha1Blocks::new(input, extra_byte_length) {
         let w = sha1_schedule(&block);
 
         let mut a = h[0];
@@ -104,11 +104,11 @@ struct Sha1Blocks<'a> {
 }
 
 impl<'a> Sha1Blocks<'a> {
-    fn new(input: &'a [u8]) -> Self {
+    fn new(input: &'a [u8], extra_byte_length: usize) -> Self {
         Self {
             chunks: input.chunks_exact(64),
             tail_block: None,
-            bit_length: input.len() as u64 * 8,
+            bit_length: (input.len() + extra_byte_length) as u64 * 8,
             done: false,
         }
     }

@@ -471,25 +471,33 @@ fn main() {
     let key = random_aes_128_key();
 
     let message = b"115";
+
     let mac = sha1_mac(&key, message);
+
+    let assumed_key_length = 16;
+
+    let glue_padding = make_sha1_glue_padding(assumed_key_length, message);
+    let our_message = b"116";
+
+    let extra_byte_length = glue_padding.len() + our_message.len() + assumed_key_length;
+
+    let faked_mac = sha1_digest_from_state(our_message, &mac, extra_byte_length);
 
     let faked: Vec<u8> = message
         .iter()
         .copied()
-        .chain(make_sha1_glue_padding(16, message))
-        .chain(b"116".iter().copied())
+        .chain(glue_padding.iter().copied())
+        .chain(our_message.iter().copied())
         .collect();
 
-    let faked_mac = sha1_digest_from_state(&faked, &mac);
-
     println!(
-        "Message is `{}`: {}",
+        "Message is '{}': {}",
         String::from_utf8_lossy(message),
         message_valid(&key, message, &mac)
     );
 
     println!(
-        "Message is `{}`: {}",
+        "Message is '{}': {}",
         String::from_utf8_lossy(&faked),
         message_valid(&key, &faked, &faked_mac)
     );
