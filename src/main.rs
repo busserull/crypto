@@ -470,16 +470,16 @@ fn make_sha1_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
 fn main() {
     let key = random_aes_128_key();
 
-    let message = b"115";
+    let message = b"comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon";
 
     let mac = sha1_mac(&key, message);
 
     let assumed_key_length = 16;
 
     let glue_padding = make_sha1_glue_padding(assumed_key_length, message);
-    let our_message = b"116";
+    let our_message = b";admin=true";
 
-    let extra_byte_length = glue_padding.len() + our_message.len() + assumed_key_length;
+    let extra_byte_length = glue_padding.len() + message.len() + assumed_key_length;
 
     let faked_mac = sha1_digest_from_state(our_message, &mac, extra_byte_length);
 
