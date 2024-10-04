@@ -375,12 +375,49 @@ fn hmac_sha1(key: &AesKey, input: &[u8]) -> [u8; 20] {
     sha1_digest(&outer)
 }
 
+fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> bool {
+    let computed_hmac = hmac_sha1(key, input);
+
+    for (a, b) in computed_hmac.iter().zip(supplied_hmac.iter()) {
+        if a != b {
+            return false;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    true
+}
+
 fn main() {
-    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
+    let key = random_aes_128_key();
 
     let input = b"Upstate";
 
-    let hmac = hmac_sha1(&key, input);
+    let mut guessed_hash = [0; 20];
 
-    println!("{}", hex::encode(&hmac));
+    for index in 0..guessed_hash.len() {
+        let expected_limit = 50_000 * (index + 1) as u128;
+        let mut correct_byte = 0;
+
+        for byte in 0..=u8::MAX {
+            guessed_hash[index] = byte;
+
+            let now = std::time::Instant::now();
+
+            validate_hmac_sha1(&key, input, &guessed_hash);
+
+            let elapsed = now.elapsed().as_micros();
+
+            if elapsed > expected_limit {
+                correct_byte = byte;
+                break;
+            }
+        }
+
+        guessed_hash[index] = correct_byte;
+    }
+
+    println!("Correct hash: {}", hex::encode(hmac_sha1(&key, input)));
+    println!("Guessed hash: {}", hex::encode(guessed_hash));
 }
