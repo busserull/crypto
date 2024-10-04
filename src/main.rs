@@ -4,6 +4,7 @@ mod aes;
 mod base64;
 mod chunk_pair_iter;
 mod key_value;
+mod md4;
 mod pkcs7;
 mod random;
 mod sha;
@@ -468,6 +469,11 @@ fn make_sha1_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
+    let input = b"upstate";
+
+    println!("{}", hex::encode(md4::md4_digest(input)));
+
+    /*
     let key = random_aes_128_key();
 
     let message = b"comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon";
@@ -501,4 +507,5 @@ fn main() {
         String::from_utf8_lossy(&faked),
         message_valid(&key, &faked, &faked_mac)
     );
+    */
 }
