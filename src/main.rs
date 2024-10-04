@@ -12,6 +12,7 @@ mod urandom;
 
 use aes::{aes_ctr, AesCtrIter, AesKey};
 use chunk_pair_iter::ChunkPairIter;
+use md4::{md4_digest, md4_digest_from_state};
 use random::MersenneStream;
 use random::MersenneTwister;
 use sha::{sha1_digest, sha1_digest_from_state};
@@ -442,12 +443,23 @@ fn sha1_mac(key: &AesKey, input: &[u8]) -> [u8; 20] {
     sha1_digest(&input)
 }
 
+fn md4_mac(key: &AesKey, input: &[u8]) -> [u8; 16] {
+    let input: Vec<u8> = key
+        .as_ref()
+        .iter()
+        .copied()
+        .chain(input.iter().copied())
+        .collect();
+
+    md4_digest(&input)
+}
+
 fn message_valid(key: &AesKey, message: &[u8], mac: &[u8]) -> bool {
-    let new_mac = sha1_mac(key, message);
+    let new_mac = md4_mac(key, message);
     new_mac == mac
 }
 
-fn make_sha1_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
+fn make_hash_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
     let length = key_byte_length + message.len();
     let remainder = length % 64;
 
@@ -457,7 +469,7 @@ fn make_sha1_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
         64 - remainder
     };
 
-    let bit_length = u64::to_be_bytes((length * 8) as u64);
+    let bit_length = u64::to_le_bytes((length * 8) as u64);
 
     [0x80]
         .iter()
@@ -469,25 +481,20 @@ fn make_sha1_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
-    let input = b"upstate";
-
-    println!("{}", hex::encode(md4::md4_digest(input)));
-
-    /*
     let key = random_aes_128_key();
 
     let message = b"comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon";
 
-    let mac = sha1_mac(&key, message);
+    let mac = md4_mac(&key, message);
 
     let assumed_key_length = 16;
 
-    let glue_padding = make_sha1_glue_padding(assumed_key_length, message);
+    let glue_padding = make_hash_glue_padding(assumed_key_length, message);
     let our_message = b";admin=true";
 
     let extra_byte_length = glue_padding.len() + message.len() + assumed_key_length;
 
-    let faked_mac = sha1_digest_from_state(our_message, &mac, extra_byte_length);
+    let faked_mac = md4_digest_from_state(our_message, &mac, extra_byte_length);
 
     let faked: Vec<u8> = message
         .iter()
@@ -507,5 +514,4 @@ fn main() {
         String::from_utf8_lossy(&faked),
         message_valid(&key, &faked, &faked_mac)
     );
-    */
 }
