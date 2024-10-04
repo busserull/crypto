@@ -338,100 +338,6 @@ fn random_aes_128_key() -> AesKey {
     AesKey::from(&urandom::bytes(16)).unwrap()
 }
 
-fn ctr_edit(ciphertext: &mut [u8], key: &AesKey, nonce: u64, offset: usize, newtext: &[u8]) {
-    for ((slot, key), byte) in ciphertext
-        .iter_mut()
-        .skip(offset)
-        .zip(AesCtrIter::new(key, nonce).into_iter().skip(offset))
-        .zip(newtext.iter())
-    {
-        *slot = key ^ byte;
-    }
-}
-
-fn exploit_edit_to_recover_key(ciphertext: &[u8], key: &AesKey, nonce: u64) -> Vec<u8> {
-    let mut recovered = Vec::from(ciphertext);
-    let zeros = [0u8].repeat(ciphertext.len());
-
-    ctr_edit(&mut recovered, key, nonce, 0, &zeros);
-
-    recovered
-}
-
-struct InsecureApplication {
-    key: AesKey,
-    nonce: u64,
-}
-
-impl InsecureApplication {
-    fn new() -> Self {
-        Self {
-            key: random_aes_128_key(),
-            nonce: urandom::range(0, u32::MAX) as u64,
-        }
-    }
-
-    fn create_user(&self, name: &str) -> Vec<u8> {
-        let name = name.replace('=', "\\=").replace('&', "\\&");
-        let id = urandom::range(5, 987968971);
-
-        aes_ctr(
-            format!("id={}&name={}&type=user", id, name)
-                .bytes()
-                .collect::<Vec<u8>>(),
-            &self.key,
-            self.nonce,
-        )
-    }
-
-    fn is_admin(&self, input: &[u8]) -> bool {
-        let decrypted = aes_ctr(input, &self.key, self.nonce);
-        let decoded = String::from_utf8_lossy(&decrypted);
-
-        decoded.contains("&admin=true")
-    }
-}
-
-enum DecryptError {
-    HighAsciiError(Vec<u8>),
-    GenericError,
-}
-
-fn cbc_encrypt_key_as_iv(input: &[u8], key: &[u8]) -> Vec<u8> {
-    let iv = key;
-    let key = AesKey::from(key).unwrap();
-
-    aes::aes_cbc_encrypt(input, &key, iv).unwrap()
-}
-
-fn cbc_decrypt_key_as_iv(input: &[u8], key: &[u8]) -> Result<(), DecryptError> {
-    let iv = key;
-    let key = AesKey::from(key).unwrap();
-
-    let decrypt = match aes::aes_cbc_decrypt(input, &key, iv) {
-        Ok(result) => result,
-        Err(_) => return Err(DecryptError::GenericError),
-    };
-
-    for byte in decrypt.iter() {
-        if *byte > 127 {
-            return Err(DecryptError::HighAsciiError(decrypt));
-        }
-    }
-
-    Ok(())
-}
-
-fn create_malicious_payload(ciphertext: &[u8]) -> Vec<u8> {
-    ciphertext
-        .iter()
-        .take(16)
-        .copied()
-        .chain([0].repeat(16))
-        .chain(ciphertext.iter().copied())
-        .collect()
-}
-
 fn sha1_mac(key: &AesKey, input: &[u8]) -> [u8; 20] {
     let input: Vec<u8> = key
         .as_ref()
@@ -443,75 +349,38 @@ fn sha1_mac(key: &AesKey, input: &[u8]) -> [u8; 20] {
     sha1_digest(&input)
 }
 
-fn md4_mac(key: &AesKey, input: &[u8]) -> [u8; 16] {
-    let input: Vec<u8> = key
-        .as_ref()
-        .iter()
-        .copied()
-        .chain(input.iter().copied())
-        .collect();
+fn hmac_sha1(key: &AesKey, input: &[u8]) -> [u8; 20] {
+    let mut opad: [u8; 64] = [0x5c; 64];
+    let mut ipad: [u8; 64] = [0x36; 64];
 
-    md4_digest(&input)
-}
+    let mut dkey: [u8; 64] = [0; 64];
 
-fn message_valid(key: &AesKey, message: &[u8], mac: &[u8]) -> bool {
-    let new_mac = md4_mac(key, message);
-    new_mac == mac
-}
-
-fn make_hash_glue_padding(key_byte_length: usize, message: &[u8]) -> Vec<u8> {
-    let length = key_byte_length + message.len();
-    let remainder = length % 64;
-
-    let padding_length = if remainder > 55 {
-        128 - remainder
+    if key.as_ref().len() > 64 {
+        let key_hash = sha1_digest(key.as_ref());
+        (&mut dkey[0..key_hash.len()]).copy_from_slice(&key_hash);
     } else {
-        64 - remainder
-    };
+        (&mut dkey[0..key.as_ref().len()]).copy_from_slice(key.as_ref());
+    }
 
-    let bit_length = u64::to_le_bytes((length * 8) as u64);
+    for ((o, i), byte) in opad.iter_mut().zip(ipad.iter_mut()).zip(dkey.iter()) {
+        *o ^= byte;
+        *i ^= byte;
+    }
 
-    [0x80]
-        .iter()
-        .copied()
-        .chain([0].iter().copied().cycle())
-        .take(padding_length - 8)
-        .chain(bit_length)
-        .collect()
+    let inner: Vec<u8> = ipad.into_iter().chain(input.iter().copied()).collect();
+    let inner_hash = sha1_digest(&inner);
+
+    let outer: Vec<u8> = opad.into_iter().chain(inner_hash.into_iter()).collect();
+
+    sha1_digest(&outer)
 }
 
 fn main() {
-    let key = random_aes_128_key();
+    let key = AesKey::from(b"YELLOW SUBMARINE").unwrap();
 
-    let message = b"comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon";
+    let input = b"Upstate";
 
-    let mac = md4_mac(&key, message);
+    let hmac = hmac_sha1(&key, input);
 
-    let assumed_key_length = 16;
-
-    let glue_padding = make_hash_glue_padding(assumed_key_length, message);
-    let our_message = b";admin=true";
-
-    let extra_byte_length = glue_padding.len() + message.len() + assumed_key_length;
-
-    let faked_mac = md4_digest_from_state(our_message, &mac, extra_byte_length);
-
-    let faked: Vec<u8> = message
-        .iter()
-        .copied()
-        .chain(glue_padding.iter().copied())
-        .chain(our_message.iter().copied())
-        .collect();
-
-    println!(
-        "Message is '{}': {}",
-        String::from_utf8_lossy(message),
-        message_valid(&key, message, &mac)
-    );
-
-    println!(
-        "Message is '{}': {}",
-        String::from_utf8_lossy(&faked),
-        message_valid(&key, &faked, &faked_mac)
-    );
+    println!("{}", hex::encode(&hmac));
 }
