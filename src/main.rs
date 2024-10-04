@@ -383,7 +383,7 @@ fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> b
             return false;
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 
     true
@@ -397,7 +397,7 @@ fn main() {
     let mut guessed_hash = [0; 20];
 
     for index in 0..guessed_hash.len() {
-        let expected_limit = 50_000 * (index + 1) as u128;
+        let mut longest_delay = 0;
         let mut correct_byte = 0;
 
         for byte in 0..=u8::MAX {
@@ -406,12 +406,13 @@ fn main() {
             let now = std::time::Instant::now();
 
             validate_hmac_sha1(&key, input, &guessed_hash);
+            validate_hmac_sha1(&key, input, &guessed_hash);
 
             let elapsed = now.elapsed().as_micros();
 
-            if elapsed > expected_limit {
+            if elapsed > longest_delay {
+                longest_delay = elapsed;
                 correct_byte = byte;
-                break;
             }
         }
 
