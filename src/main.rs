@@ -8,6 +8,7 @@ mod md4;
 mod pkcs7;
 mod random;
 mod sha;
+mod ubig;
 mod urandom;
 
 use aes::{aes_ctr, AesCtrIter, AesKey};
@@ -16,6 +17,7 @@ use md4::{md4_digest, md4_digest_from_state};
 use random::MersenneStream;
 use random::MersenneTwister;
 use sha::{sha1_digest, sha1_digest_from_state};
+use ubig::Ubig;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -390,35 +392,9 @@ fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> b
 }
 
 fn main() {
-    let key = random_aes_128_key();
+    let a = Ubig::new("48965128");
+    let b = Ubig::new("fabeac01");
 
-    let input = b"Upstate";
-
-    let mut guessed_hash = [0; 20];
-
-    for index in 0..guessed_hash.len() {
-        let mut longest_delay = 0;
-        let mut correct_byte = 0;
-
-        for byte in 0..=u8::MAX {
-            guessed_hash[index] = byte;
-
-            let now = std::time::Instant::now();
-
-            validate_hmac_sha1(&key, input, &guessed_hash);
-            validate_hmac_sha1(&key, input, &guessed_hash);
-
-            let elapsed = now.elapsed().as_micros();
-
-            if elapsed > longest_delay {
-                longest_delay = elapsed;
-                correct_byte = byte;
-            }
-        }
-
-        guessed_hash[index] = correct_byte;
-    }
-
-    println!("Correct hash: {}", hex::encode(hmac_sha1(&key, input)));
-    println!("Guessed hash: {}", hex::encode(guessed_hash));
+    println!("{} + {}", a, b);
+    println!("{}", a + b);
 }
