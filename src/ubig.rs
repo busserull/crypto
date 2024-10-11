@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
 use std::fmt;
 use std::iter::Rev;
-use std::ops::{Add, BitAnd, BitOrAssign, Mul, Rem, ShlAssign, SubAssign};
+use std::ops::{Add, BitAnd, BitOrAssign, Mul, Rem, ShlAssign, ShrAssign, SubAssign};
 
+#[derive(Clone)]
 pub struct Ubig(Vec<u8>);
 
 impl Ubig {
@@ -11,6 +12,42 @@ impl Ubig {
         bytes.reverse();
 
         Self(bytes)
+    }
+
+    pub fn modexp(base: Self, mut exponent: Self, modulus: Self) -> Self {
+        let mut res = Self(vec![1]);
+        let mut base = base % &modulus;
+
+        let two = Self(vec![2]);
+
+        while exponent.not_zero() {
+            if (exponent.clone() % &two).is_one() {
+                res = (res * base.clone()) % &modulus;
+            }
+
+            exponent >>= 1;
+
+            base = (base.clone() * base) % &modulus;
+        }
+
+        res
+    }
+
+    fn not_zero(&self) -> bool {
+        for byte in self.0.iter() {
+            if *byte != 0 {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn is_one(&self) -> bool {
+        let leading_zeros = self.0.iter().rev().take_while(|byte| **byte == 0).count();
+        let bytes = &self.0[0..self.0.len() - leading_zeros];
+
+        bytes.len() == 1 && *bytes.first().unwrap() == 1
     }
 }
 
@@ -104,10 +141,10 @@ fn add_mult(work: &mut [u8], mult: u16) {
     assert_eq!(carry, 0, "Not enough space was allocated for addition");
 }
 
-impl Rem for Ubig {
+impl Rem<&Ubig> for Ubig {
     type Output = Self;
 
-    fn rem(self, rhs: Self) -> Self::Output {
+    fn rem(self, rhs: &Ubig) -> Self::Output {
         let mut rem = Self(vec![0u8]);
 
         for byte in self.0.into_iter().rev() {
@@ -117,8 +154,8 @@ impl Rem for Ubig {
                 let s = rem.0.first_mut().unwrap();
                 *s |= byte.wrapping_shr(7 - i) & 0x01;
 
-                if rem >= rhs {
-                    rem -= &rhs;
+                if rem >= *rhs {
+                    rem -= rhs;
                 }
             }
         }
@@ -136,21 +173,44 @@ impl ShlAssign<u32> for Ubig {
         let mut shift_in_bytes = vec![0u8; rhs as usize / 8];
         let shift = rhs % 8;
 
-        let mut carry = 0u8;
+        if shift != 0 {
+            let mut carry = 0u8;
 
-        for byte in self.0.iter_mut() {
-            let new_carry = byte.wrapping_shr(8 - shift);
-            *byte = byte.wrapping_shl(shift) | carry;
-            carry = new_carry;
-        }
+            for byte in self.0.iter_mut() {
+                let new_carry = byte.wrapping_shr(8 - shift);
+                *byte = byte.wrapping_shl(shift) | carry;
+                carry = new_carry;
+            }
 
-        if carry != 0 {
-            self.0.push(carry);
+            if carry != 0 {
+                self.0.push(carry);
+            }
         }
 
         shift_in_bytes.extend_from_slice(&self.0);
 
         self.0 = shift_in_bytes;
+    }
+}
+
+impl ShrAssign<u32> for Ubig {
+    fn shr_assign(&mut self, rhs: u32) {
+        let drop = (rhs / 8) as usize;
+        let shift = rhs % 8;
+
+        if shift != 0 {
+            let mut carry = 0;
+
+            for byte in self.0.iter_mut().rev() {
+                let new_carry = byte.wrapping_shl(8 - shift);
+                *byte = byte.wrapping_shr(shift) | carry;
+                carry = new_carry;
+            }
+        }
+
+        let leading_zeros = self.0.iter().rev().take_while(|byte| **byte == 0).count();
+
+        self.0 = Vec::from(&self.0[drop..self.0.len() - leading_zeros]);
     }
 }
 
@@ -173,10 +233,6 @@ impl SubAssign<&Ubig> for Ubig {
 
             *byte = res as u8;
         }
-
-        // let leading_zeros = self.0.iter().rev().take_while(|byte| **byte == 0).count();
-
-        // self.0.truncate(self.0.len() - leading_zeros);
     }
 }
 
