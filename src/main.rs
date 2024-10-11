@@ -393,8 +393,11 @@ fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> b
 
 fn main() {
     let a = Ubig::new("48965128");
-    let b = Ubig::new("fabeac01");
+    let b = Ubig::new("50ab11");
 
-    println!("{} + {}", a, b);
-    println!("{}", a + b);
+    print!("{} % {} = ", a, b);
+
+    let c = a % b;
+
+    println!("{}", c);
 }
