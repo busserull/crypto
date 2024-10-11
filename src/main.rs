@@ -3,6 +3,7 @@
 mod aes;
 mod base64;
 mod chunk_pair_iter;
+mod dh;
 mod key_value;
 mod md4;
 mod pkcs7;
@@ -392,7 +393,17 @@ fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> b
 }
 
 fn main() {
-    let res = Ubig::modexp(Ubig::new("1234"), Ubig::new("85"), Ubig::new("ad"));
+    let a = urandom::bytes(20);
+    let a_public = dh::nist_dh_public(&a);
 
-    println!("{}", res);
+    let b = urandom::bytes(20);
+    let b_public = dh::nist_dh_public(&b);
+
+    let s = dh::nist_dh_secret(&b_public, &a);
+    let c = dh::nist_dh_secret(&a_public, &b);
+
+    println!("{}", hex::encode(&s));
+    println!("{}", hex::encode(&c));
+
+    println!("Equal: {}", s == c);
 }

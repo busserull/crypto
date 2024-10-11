@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 use std::iter::Rev;
-use std::ops::{Add, BitAnd, BitOrAssign, Mul, Rem, ShlAssign, ShrAssign, SubAssign};
+use std::ops::{Add, Mul, Rem, ShlAssign, ShrAssign, SubAssign};
 
 #[derive(Clone)]
 pub struct Ubig(Vec<u8>);
@@ -48,6 +48,18 @@ impl Ubig {
         let bytes = &self.0[0..self.0.len() - leading_zeros];
 
         bytes.len() == 1 && *bytes.first().unwrap() == 1
+    }
+}
+
+impl From<&[u8]> for Ubig {
+    fn from(value: &[u8]) -> Self {
+        Self(Vec::from(value))
+    }
+}
+
+impl From<Ubig> for Vec<u8> {
+    fn from(value: Ubig) -> Self {
+        value.0
     }
 }
 
