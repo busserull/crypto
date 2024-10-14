@@ -17,6 +17,10 @@ const NIST_DH_P: [u8; 192] = [
 
 const NIST_DH_G: [u8; 1] = [2];
 
+pub fn nist_dh_p() -> Ubig {
+    Ubig::from(NIST_DH_P.as_ref())
+}
+
 pub fn nist_dh_public(private: &[u8]) -> Vec<u8> {
     let p = Ubig::from(NIST_DH_P.as_ref());
     let g = Ubig::from(NIST_DH_G.as_ref());

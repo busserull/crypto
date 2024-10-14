@@ -14,6 +14,7 @@ mod urandom;
 
 use aes::{aes_ctr, AesCtrIter, AesKey};
 use chunk_pair_iter::ChunkPairIter;
+use dh::nist_dh_secret;
 use md4::{md4_digest, md4_digest_from_state};
 use random::MersenneStream;
 use random::MersenneTwister;
@@ -393,19 +394,52 @@ fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> b
 }
 
 fn main() {
-    let a = urandom::bytes(20);
-    let a_public = dh::nist_dh_public(&a);
+    /* Alice */
+    let alice_private = urandom::bytes(20);
+    let alice_public = dh::nist_dh_public(&alice_private);
 
-    let b = urandom::bytes(20);
-    let b_public = dh::nist_dh_public(&b);
+    /* Bob */
+    let bob_private = urandom::bytes(20);
+    let bob_public = dh::nist_dh_public(&bob_private);
 
-    let s = dh::nist_dh_secret(&b_public, &a);
-    let c = dh::nist_dh_secret(&a_public, &b);
+    /* Mallory fiddles with keys in transit */
+    let alice_secret = dh::nist_dh_secret(dh::nist_dh_p().as_ref(), &alice_private);
+    let bob_secret = dh::nist_dh_secret(dh::nist_dh_p().as_ref(), &bob_private);
 
-    println!("Secret 1: {}", hex::encode(&s));
-    println!();
-    println!("Secret 2: {}", hex::encode(&c));
+    let alice_aes = AesKey::from(&sha::sha1_digest(&alice_secret)[0..16]).unwrap();
+    let bob_aes = AesKey::from(&sha::sha1_digest(&bob_secret)[0..16]).unwrap();
 
-    println!();
-    println!("Equal: {}", s == c);
+    let alice_iv = urandom::bytes(16);
+    let bob_iv = urandom::bytes(16);
+
+    let alice_message = aes::aes_cbc_encrypt(
+        "i still can't believe it's not butter",
+        &alice_aes,
+        &alice_iv,
+    )
+    .unwrap();
+
+    let bob_message = aes::aes_cbc_encrypt(
+        "put it on anything, it's good for your skin",
+        &bob_aes,
+        &bob_iv,
+    )
+    .unwrap();
+
+    /* Alice and Bob can communicate */
+    let alice_clear = aes::aes_cbc_decrypt(&bob_message, &alice_aes, &bob_iv).unwrap();
+    let bob_clear = aes::aes_cbc_decrypt(&alice_message, &bob_aes, &alice_iv).unwrap();
+
+    println!("Alice got: {:?}", String::from_utf8_lossy(&alice_clear));
+    println!("Bob got: {:?}", String::from_utf8_lossy(&bob_clear));
+
+    /* Mallory knows the key and can decrypt anything */
+    let mallory_aes = AesKey::from(&sha::sha1_digest(&[])[0..16]).unwrap();
+
+    let a = aes::aes_cbc_decrypt(&alice_message, &mallory_aes, &alice_iv).unwrap();
+    let b = aes::aes_cbc_decrypt(&bob_message, &mallory_aes, &bob_iv).unwrap();
+
+    println!("Mallory reads:");
+    println!("{}", String::from_utf8_lossy(&a));
+    println!("{}", String::from_utf8_lossy(&b));
 }

@@ -63,6 +63,12 @@ impl From<Ubig> for Vec<u8> {
     }
 }
 
+impl AsRef<[u8]> for Ubig {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 impl fmt::Display for Ubig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0.is_empty() {
