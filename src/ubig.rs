@@ -65,6 +65,10 @@ impl From<Ubig> for Vec<u8> {
 
 impl fmt::Display for Ubig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return write!(f, "0");
+        }
+
         for byte in self.0.iter().rev() {
             write!(f, "{:02x}", byte)?;
         }
@@ -114,14 +118,25 @@ impl Mul for Ubig {
 
         let mut work = vec![0u8; 2 * length];
 
-        for (i, a) in self.0.into_iter().enumerate() {
-            for (o, b) in rhs.0.iter().enumerate() {
-                let a = a as u16;
-                let b = *b as u16;
+        for (ia, a) in self.0.into_iter().enumerate() {
+            for (ib, b) in rhs.0.iter().enumerate() {
+                let mul = (a as u16) * (*b as u16) + work[ia + ib] as u16;
 
-                let c = a * b;
+                let slot = mul as u8;
+                work[ia + ib] = slot;
 
-                add_mult(&mut work[i + o..], c);
+                let mut carry = mul.wrapping_shr(8) as u8;
+
+                for s in (&mut work[ia + ib + 1..]).iter_mut() {
+                    if carry == 0 {
+                        break;
+                    }
+
+                    let sum = *s as u16 + carry as u16;
+
+                    *s = sum as u8;
+                    carry = sum.wrapping_shr(8) as u8;
+                }
             }
         }
 
@@ -131,26 +146,6 @@ impl Mul for Ubig {
 
         Self(work)
     }
-}
-
-fn add_mult(work: &mut [u8], mult: u16) {
-    let add = work[0] as u16 + (mult & 0xff);
-    work[0] = (add & 0xff) as u8;
-
-    let mut carry = mult.wrapping_shr(8) + add.wrapping_shr(8);
-
-    for i in 1..work.len() {
-        if carry == 0 {
-            break;
-        }
-
-        let add = work[i] as u16 + carry;
-        work[i] = (add & 0xff) as u8;
-
-        carry = carry.wrapping_shr(8);
-    }
-
-    assert_eq!(carry, 0, "Not enough space was allocated for addition");
 }
 
 impl Rem<&Ubig> for Ubig {

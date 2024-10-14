@@ -402,8 +402,10 @@ fn main() {
     let s = dh::nist_dh_secret(&b_public, &a);
     let c = dh::nist_dh_secret(&a_public, &b);
 
-    println!("{}", hex::encode(&s));
-    println!("{}", hex::encode(&c));
+    println!("Secret 1: {}", hex::encode(&s));
+    println!();
+    println!("Secret 2: {}", hex::encode(&c));
 
+    println!();
     println!("Equal: {}", s == c);
 }
