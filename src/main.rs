@@ -393,53 +393,121 @@ fn validate_hmac_sha1(key: &AesKey, input: &[u8], supplied_hmac: &[u8; 20]) -> b
     true
 }
 
-fn main() {
-    /* Alice */
+#[derive(Debug)]
+struct DhResult {
+    alice_public: Vec<u8>,
+    alice_private: Vec<u8>,
+    bob_public: Vec<u8>,
+    bob_private: Vec<u8>,
+    shared_secret: Vec<u8>,
+}
+
+fn make_dh_shared_secret(g: &[u8]) -> DhResult {
     let alice_private = urandom::bytes(20);
-    let alice_public = dh::nist_dh_public(&alice_private);
+    let alice_public = dh::dh_public(&alice_private, dh::nist_dh_p().as_ref(), g);
 
-    /* Bob */
     let bob_private = urandom::bytes(20);
-    let bob_public = dh::nist_dh_public(&bob_private);
+    let bob_public = dh::dh_public(&bob_private, dh::nist_dh_p().as_ref(), g);
 
-    /* Mallory fiddles with keys in transit */
-    let alice_secret = dh::nist_dh_secret(dh::nist_dh_p().as_ref(), &alice_private);
-    let bob_secret = dh::nist_dh_secret(dh::nist_dh_p().as_ref(), &bob_private);
+    let alice_secret = dh::dh_secret(
+        bob_public.as_ref(),
+        &alice_private,
+        dh::nist_dh_p().as_ref(),
+    );
 
-    let alice_aes = AesKey::from(&sha::sha1_digest(&alice_secret)[0..16]).unwrap();
-    let bob_aes = AesKey::from(&sha::sha1_digest(&bob_secret)[0..16]).unwrap();
+    let bob_secret = dh::dh_secret(
+        alice_public.as_ref(),
+        &bob_private,
+        dh::nist_dh_p().as_ref(),
+    );
 
-    let alice_iv = urandom::bytes(16);
-    let bob_iv = urandom::bytes(16);
+    assert_eq!(alice_secret, bob_secret);
 
-    let alice_message = aes::aes_cbc_encrypt(
-        "i still can't believe it's not butter",
-        &alice_aes,
-        &alice_iv,
+    let shared_secret = &sha::sha1_digest(&alice_secret)[0..16];
+
+    DhResult {
+        alice_public,
+        alice_private,
+        bob_public,
+        bob_private,
+        shared_secret: shared_secret.to_vec(),
+    }
+}
+
+fn main() {
+    /* For g = 1: Shared secret = 1 */
+    let g_one = [1];
+    let g_one_res = make_dh_shared_secret(&g_one);
+
+    /* For g = p: Shared secret = [] */
+    let g_p = dh::nist_dh_p();
+    let g_p_res = make_dh_shared_secret(g_p.as_ref());
+
+    /* For g = p - 1: Shared secret = 1 or p - 1 */
+    let mut g_p_minus_one = dh::nist_dh_p();
+    g_p_minus_one -= &Ubig::from(g_one.as_ref());
+    let g_p_minus_one_res = make_dh_shared_secret(g_p_minus_one.as_ref());
+
+    /* Mallory knows this */
+    let aes_g_one = (&sha::sha1_digest(&[1])[0..16]).to_vec();
+    let aes_g_p = (&sha::sha1_digest(&[])[0..16]).to_vec();
+    let aes_g_p_minus_one = (&sha::sha1_digest(&[1])[0..16]).to_vec();
+
+    let mallory_aes_g_one = AesKey::from(&aes_g_one).unwrap();
+    let mallory_aes_g_p = AesKey::from(&aes_g_p).unwrap();
+    let mallory_aes_g_p_minus_one = AesKey::from(&aes_g_p_minus_one).unwrap();
+
+    /* For g = 1 */
+
+    let iv = urandom::bytes(16);
+
+    let cipher = aes::aes_cbc_encrypt(
+        b"Wiggle wiggle",
+        &AesKey::from(&g_one_res.shared_secret).unwrap(),
+        &iv,
     )
     .unwrap();
 
-    let bob_message = aes::aes_cbc_encrypt(
-        "put it on anything, it's good for your skin",
-        &bob_aes,
-        &bob_iv,
+    let decrypted = aes::aes_cbc_decrypt(&cipher, &mallory_aes_g_one, &iv).unwrap();
+
+    println!("{}", String::from_utf8_lossy(&decrypted));
+
+    /* For g = p */
+
+    let iv = urandom::bytes(16);
+
+    let cipher = aes::aes_cbc_encrypt(
+        b"I'm dropping lyrical bombs like it's no ones business",
+        &AesKey::from(&g_p_res.shared_secret).unwrap(),
+        &iv,
     )
     .unwrap();
 
-    /* Alice and Bob can communicate */
-    let alice_clear = aes::aes_cbc_decrypt(&bob_message, &alice_aes, &bob_iv).unwrap();
-    let bob_clear = aes::aes_cbc_decrypt(&alice_message, &bob_aes, &alice_iv).unwrap();
+    let decrypted = aes::aes_cbc_decrypt(&cipher, &mallory_aes_g_p, &iv).unwrap();
 
-    println!("Alice got: {:?}", String::from_utf8_lossy(&alice_clear));
-    println!("Bob got: {:?}", String::from_utf8_lossy(&bob_clear));
+    println!("{}", String::from_utf8_lossy(&decrypted));
 
-    /* Mallory knows the key and can decrypt anything */
-    let mallory_aes = AesKey::from(&sha::sha1_digest(&[])[0..16]).unwrap();
+    /* For g = 1 */
 
-    let a = aes::aes_cbc_decrypt(&alice_message, &mallory_aes, &alice_iv).unwrap();
-    let b = aes::aes_cbc_decrypt(&bob_message, &mallory_aes, &bob_iv).unwrap();
+    let iv = urandom::bytes(16);
 
-    println!("Mallory reads:");
-    println!("{}", String::from_utf8_lossy(&a));
-    println!("{}", String::from_utf8_lossy(&b));
+    let cipher = aes::aes_cbc_encrypt(
+        b"But what are your basic assumptions?",
+        &AesKey::from(&g_p_minus_one_res.shared_secret).unwrap(),
+        &iv,
+    )
+    .unwrap();
+
+    let maybe_decrypted = aes::aes_cbc_decrypt(&cipher, &mallory_aes_g_p_minus_one, &iv);
+
+    let decrypted = if let Ok(decrypted) = maybe_decrypted {
+        decrypted
+    } else {
+        let mallory_aes_g_p_minus_one =
+            AesKey::from(&sha::sha1_digest(g_p_minus_one.as_ref())[0..16]).unwrap();
+
+        aes::aes_cbc_decrypt(&cipher, &mallory_aes_g_p_minus_one, &iv).unwrap()
+    };
+
+    println!("{}", String::from_utf8_lossy(&decrypted));
 }

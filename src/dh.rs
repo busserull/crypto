@@ -38,3 +38,21 @@ pub fn nist_dh_secret(other_public: &[u8], our_private: &[u8]) -> Vec<u8> {
 
     Ubig::modexp(g, q, p).into()
 }
+
+pub fn dh_public(private: &[u8], p: &[u8], g: &[u8]) -> Vec<u8> {
+    let p = Ubig::from(p);
+    let g = Ubig::from(g);
+
+    let q = Ubig::from(private);
+
+    Ubig::modexp(g, q, p).into()
+}
+
+pub fn dh_secret(other_public: &[u8], our_private: &[u8], p: &[u8]) -> Vec<u8> {
+    let p = Ubig::from(p);
+    let g = Ubig::from(other_public);
+
+    let q = Ubig::from(our_private);
+
+    Ubig::modexp(g, q, p).into()
+}
