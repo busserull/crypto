@@ -18,6 +18,7 @@ use dh::nist_dh_secret;
 use md4::{md4_digest, md4_digest_from_state};
 use random::MersenneStream;
 use random::MersenneTwister;
+use sha::sha256_digest;
 use sha::{sha1_digest, sha1_digest_from_state};
 use ubig::Ubig;
 
@@ -435,6 +436,20 @@ fn make_dh_shared_secret(g: &[u8]) -> DhResult {
 }
 
 fn main() {
+    let input = b"yellow submarine";
+
+    println!("{}", hex::encode(sha1_digest(input)));
+    println!("{}", hex::encode(sha256_digest(input)));
+
+    return;
+
+    /* Server */
+    let email = "alice@example.com";
+    let password = "eat flaming death";
+
+    let salt = urandom::bytes(16);
+    // let hash = sha::
+
     /* For g = 1: Shared secret = 1 */
     let g_one = [1];
     let g_one_res = make_dh_shared_secret(&g_one);
